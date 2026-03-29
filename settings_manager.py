@@ -52,13 +52,63 @@ DEFAULTS = {
     "meta": {
         "api_version": "v21.0",
     },
+
+    # ── Optimizer-Logik ────────────────────────────────────────────────────────
+    "optimizer": {
+        "freeze_days":             7,
+        "max_active_ads":          15,
+        "batch_size":              5,
+        "bottom_n":                3,
+        "scale_after_cycles":      3,
+        "min_impressions":         500,
+        "conversions_trigger":     50,
+        "creative_fatigue_freq":   3.0,
+        "upload_delay_seconds":    45,
+        "max_uploads_per_hour":    5,
+    },
+
+    # ── KPI-Bewertung ──────────────────────────────────────────────────────────
+    "kpi": {
+        "hook_rate_weight":    0.40,
+        "ctr_weight":          0.40,
+        "cpm_weight":          0.20,
+        "hook_rate_min":       0.25,
+        "ctr_min":             0.01,
+        "cpm_malus_threshold": 18.0,
+    },
+
+    # ── Budget & Skalierung ────────────────────────────────────────────────────
+    "budget": {
+        "budget_per_ad_eur":      5.0,
+        "warmup_budget_eur":      3.0,
+        "warmup_hours":           48,
+        "scale_budget_eur":       10.0,
+        "daily_spend_cap_eur":    100.0,
+        "max_budget_increase":    0.20,
+        "max_scale_multiplier":   2.0,
+    },
+
+    # ── ROAS-Schwellwert ───────────────────────────────────────────────────────
+    "roas": {
+        "min_roas":        2.0,
+        "roas_pause_days": 3,
+    },
+
+    # ── Schutz & Sicherheit (Erweiterung des bestehenden safety-Blocks) ────────
+    "guard": {
+        "anomaly_cpm_factor":           10.0,
+        "max_rejections_24h":           2,
+        "rejection_pause_minutes":      2,
+        "max_api_errors_before_pause":  3,
+    },
+
     "campaigns": {
         "active": "testing_inhouse",
         "average_order_value": 80,
         "list": [
-            {"id": "testing_inhouse", "name": "Testing Inhouse",  "description": "Eigene Videos — neues Weinpaket testen", "meta_campaign_id": "", "daily_budget": "10"},
-            {"id": "testing_cutter",  "name": "Testing Cutter",   "description": "Cutter-Videos testen",                   "meta_campaign_id": "", "daily_budget": "10"},
-            {"id": "scaling",         "name": "Scaling",          "description": "Top-Performer skalieren",                "meta_campaign_id": "", "daily_budget": "50"},
+            {"id": "testing_inhouse", "name": "Testing Inhouse", "description": "Eigene Videos — neues Weinpaket testen", "meta_campaign_id": "", "daily_budget": "10", "budget_per_ad_eur": 5.0, "warmup_budget_eur": 3.0, "spend_cap_eur": 50.0,  "min_roas": 2.0, "max_active": 15},
+            {"id": "testing_cutter",  "name": "Testing Cutter",  "description": "Cutter-Videos testen",                   "meta_campaign_id": "", "daily_budget": "10", "budget_per_ad_eur": 5.0, "warmup_budget_eur": 3.0, "spend_cap_eur": 50.0,  "min_roas": 2.0, "max_active": 15},
+            {"id": "scaling",         "name": "Scaling",         "description": "Top-Performer skalieren",                "meta_campaign_id": "", "daily_budget": "50", "budget_per_ad_eur": 10.0, "warmup_budget_eur": 5.0, "spend_cap_eur": 100.0, "min_roas": 3.0, "max_active": 10},
         ],
     },
     "geo_exclusion": {
@@ -186,16 +236,57 @@ class SettingsManager:
         except Exception:
             return True
 
+    def get_campaign(self, campaign_id: str = None) -> dict:
+        """Gibt das Campaign-Dict für die aktive (oder angegebene) Kampagne zurück."""
+        cid   = campaign_id or self.get("campaigns.active", "testing_inhouse")
+        camps = self.get("campaigns.list", [])
+        for c in camps:
+            if c["id"] == cid:
+                return c
+        return {}
+
+    def get_campaign_setting(self, key: str, campaign_id: str = None, default=None):
+        """
+        Liest eine Einstellung — Campaign-spezifischer Wert hat Vorrang vor globalem Default.
+        z.B. get_campaign_setting("budget_per_ad_eur") → 5.0
+        """
+        camp = self.get_campaign(campaign_id)
+        if key in camp:
+            return camp[key]
+        return default
+
     def validate_and_set(self, key_path: str, value, updated_by: str = "system") -> tuple[bool, str]:
         """Setzt Wert nach Validierung. Gibt (ok, fehlermeldung) zurück."""
         RULES = {
-            "safety.max_uploads_per_day":    (1, 20,  int),
-            "safety.warmup_uploads_per_day": (1, 10,  int),
-            "safety.min_delay_seconds":      (30, 600, int),
-            "safety.max_delay_seconds":      (60, 900, int),
-            "safety.max_api_calls_per_hour": (50, 500, int),
-            "safety.slowdown_threshold":     (50, 499, int),
-            "safety.max_errors_before_pause":(1, 10,  int),
+            "safety.max_uploads_per_day":          (1,    20,    int),
+            "safety.warmup_uploads_per_day":       (1,    10,    int),
+            "safety.min_delay_seconds":            (30,   600,   int),
+            "safety.max_delay_seconds":            (60,   900,   int),
+            "safety.max_api_calls_per_hour":       (50,   500,   int),
+            "safety.slowdown_threshold":           (50,   499,   int),
+            "safety.max_errors_before_pause":      (1,    10,    int),
+            "optimizer.freeze_days":               (1,    30,    int),
+            "optimizer.max_active_ads":            (1,    50,    int),
+            "optimizer.batch_size":                (1,    10,    int),
+            "optimizer.bottom_n":                  (1,    10,    int),
+            "optimizer.scale_after_cycles":        (1,    20,    int),
+            "optimizer.min_impressions":           (50,   5000,  int),
+            "optimizer.conversions_trigger":       (1,    500,   int),
+            "optimizer.upload_delay_seconds":      (10,   300,   int),
+            "kpi.hook_rate_min":                   (0,    1,     float),
+            "kpi.ctr_min":                         (0,    1,     float),
+            "kpi.cpm_malus_threshold":             (1,    100,   float),
+            "budget.budget_per_ad_eur":            (1,    100,   float),
+            "budget.warmup_budget_eur":            (1,    50,    float),
+            "budget.warmup_hours":                 (1,    168,   int),
+            "budget.scale_budget_eur":             (1,    500,   float),
+            "budget.daily_spend_cap_eur":          (1,    10000, float),
+            "budget.max_scale_multiplier":         (1,    10,    float),
+            "roas.min_roas":                       (0,    20,    float),
+            "roas.roas_pause_days":                (1,    14,    int),
+            "guard.anomaly_cpm_factor":            (2,    50,    float),
+            "guard.max_rejections_24h":            (1,    10,    int),
+            "guard.max_api_errors_before_pause":   (1,    10,    int),
         }
         if key_path in RULES:
             min_v, max_v, typ = RULES[key_path]

@@ -473,17 +473,95 @@ def einstellungen():
                 settings.set("campaigns.average_order_value", aov, "dashboard")
             except (ValueError, TypeError):
                 pass
-            # Kampagnen-IDs speichern
+            # Kampagnen-IDs + per-campaign Budget/Limits
             campaigns_list = settings.get("campaigns.list", [])
             for camp in campaigns_list:
                 cid = camp["id"]
-                meta_id = request.form.get(f"meta_campaign_id_{cid}", "").strip()
-                budget  = request.form.get(f"daily_budget_{cid}", "").strip()
-                if meta_id:
-                    camp["meta_campaign_id"] = meta_id
-                if budget:
-                    camp["daily_budget"] = budget
+                for field, key, typ in [
+                    (f"meta_campaign_id_{cid}", "meta_campaign_id", str),
+                    (f"daily_budget_{cid}",     "daily_budget",     str),
+                    (f"budget_per_ad_{cid}",    "budget_per_ad_eur", float),
+                    (f"warmup_budget_{cid}",    "warmup_budget_eur", float),
+                    (f"spend_cap_{cid}",        "spend_cap_eur",    float),
+                    (f"min_roas_{cid}",         "min_roas",         float),
+                    (f"max_active_{cid}",       "max_active",       int),
+                ]:
+                    val = request.form.get(field, "").strip()
+                    if val:
+                        try:
+                            camp[key] = typ(val)
+                        except (ValueError, TypeError):
+                            errors.append(f"{field}: ungültiger Wert")
             settings.set("campaigns.list", campaigns_list, "dashboard")
+
+            # Optimizer-Logik
+            for key_path, field_name in [
+                ("optimizer.freeze_days",           "freeze_days"),
+                ("optimizer.max_active_ads",        "max_active_ads"),
+                ("optimizer.batch_size",            "batch_size"),
+                ("optimizer.bottom_n",              "bottom_n"),
+                ("optimizer.scale_after_cycles",    "scale_after_cycles"),
+                ("optimizer.min_impressions",       "min_impressions"),
+                ("optimizer.conversions_trigger",   "conversions_trigger"),
+                ("optimizer.upload_delay_seconds",  "upload_delay_seconds"),
+            ]:
+                val = request.form.get(field_name)
+                if val is not None:
+                    ok, msg = settings.validate_and_set(key_path, val, "dashboard")
+                    if not ok:
+                        errors.append(f"{field_name}: {msg}")
+
+            # KPI-Bewertung
+            for key_path, field_name in [
+                ("kpi.hook_rate_min",       "hook_rate_min"),
+                ("kpi.ctr_min",             "ctr_min"),
+                ("kpi.cpm_malus_threshold", "cpm_malus_threshold"),
+            ]:
+                val = request.form.get(field_name)
+                if val is not None:
+                    ok, msg = settings.validate_and_set(key_path, val, "dashboard")
+                    if not ok:
+                        errors.append(f"{field_name}: {msg}")
+            for key_path, field_name in [
+                ("kpi.hook_rate_weight", "hook_rate_weight"),
+                ("kpi.ctr_weight",       "ctr_weight"),
+                ("kpi.cpm_weight",       "cpm_weight"),
+            ]:
+                val = request.form.get(field_name)
+                if val is not None:
+                    try:
+                        settings.set(key_path, float(val), "dashboard")
+                    except (ValueError, TypeError):
+                        errors.append(f"{field_name}: muss eine Zahl sein")
+
+            # Budget & Skalierung
+            for key_path, field_name in [
+                ("budget.budget_per_ad_eur",    "budget_per_ad_eur"),
+                ("budget.warmup_budget_eur",    "warmup_budget_eur"),
+                ("budget.warmup_hours",         "warmup_hours"),
+                ("budget.scale_budget_eur",     "scale_budget_eur"),
+                ("budget.daily_spend_cap_eur",  "daily_spend_cap_eur"),
+                ("budget.max_scale_multiplier", "max_scale_multiplier"),
+            ]:
+                val = request.form.get(field_name)
+                if val is not None:
+                    ok, msg = settings.validate_and_set(key_path, val, "dashboard")
+                    if not ok:
+                        errors.append(f"{field_name}: {msg}")
+
+            # ROAS & Schutz
+            for key_path, field_name in [
+                ("roas.min_roas",                    "min_roas"),
+                ("roas.roas_pause_days",             "roas_pause_days"),
+                ("guard.anomaly_cpm_factor",         "anomaly_cpm_factor"),
+                ("guard.max_rejections_24h",         "max_rejections_24h"),
+                ("guard.max_api_errors_before_pause","max_api_errors_before_pause"),
+            ]:
+                val = request.form.get(field_name)
+                if val is not None:
+                    ok, msg = settings.validate_and_set(key_path, val, "dashboard")
+                    if not ok:
+                        errors.append(f"{field_name}: {msg}")
 
             # Geo-Ausschluss
             settings.set("geo_exclusion.enabled",       "geo_exclusion_enabled" in request.form, "dashboard")
@@ -505,11 +583,16 @@ def einstellungen():
         return redirect(url_for("einstellungen"))
 
     s = settings.get_all()
-    sf = s.get("safety", {})
-    sc = s.get("schedule", {})
-    sg = s.get("geo_exclusion", {})
-    scampaigns = s.get("campaigns", {})
-    campaigns_list = scampaigns.get("list", [])
+    sf  = s.get("safety", {})
+    sc  = s.get("schedule", {})
+    sg  = s.get("geo_exclusion", {})
+    sop = s.get("optimizer", {})
+    skp = s.get("kpi", {})
+    sbg = s.get("budget", {})
+    srs = s.get("roas", {})
+    sgu = s.get("guard", {})
+    scampaigns  = s.get("campaigns", {})
+    campaigns_list  = scampaigns.get("list", [])
     active_campaign = scampaigns.get("active", "testing_inhouse")
 
     def checked(val):
@@ -611,14 +694,34 @@ def einstellungen():
         <div class="section-title" style="margin-top:8px">Meta Kampagnen-IDs &amp; Budgets</div>
         <div class="grid">
           {''.join(f"""<div class="card" style="background:#f8f9fc;padding:16px">
-            <div style="font-weight:600;margin-bottom:8px">{c["name"]}</div>
+            <div style="font-weight:600;margin-bottom:10px">{c["name"]}</div>
             <div class="field">
               <label>Meta Kampagnen-ID</label>
               <input type="text" name="meta_campaign_id_{c['id']}" value="{c.get('meta_campaign_id', '')}" placeholder="123456789">
             </div>
             <div class="field">
-              <label>Tagesbudget (€)</label>
+              <label>Tagesbudget gesamt (€)</label>
               <input type="text" name="daily_budget_{c['id']}" value="{c.get('daily_budget', '10')}" placeholder="10">
+            </div>
+            <div class="field">
+              <label>Budget pro Ad / Tag (€)</label>
+              <input type="number" name="budget_per_ad_{c['id']}" value="{c.get('budget_per_ad_eur', 5.0)}" min="1" max="500" step="0.5">
+            </div>
+            <div class="field">
+              <label>Warmup-Budget neue Ads (€)</label>
+              <input type="number" name="warmup_budget_{c['id']}" value="{c.get('warmup_budget_eur', 3.0)}" min="1" max="100" step="0.5">
+            </div>
+            <div class="field">
+              <label>Spend-Cap / Tag (€)</label>
+              <input type="number" name="spend_cap_{c['id']}" value="{c.get('spend_cap_eur', 100.0)}" min="1" max="10000">
+            </div>
+            <div class="field">
+              <label>Mindest-ROAS</label>
+              <input type="number" name="min_roas_{c['id']}" value="{c.get('min_roas', 2.0)}" min="0" max="20" step="0.1">
+            </div>
+            <div class="field">
+              <label>Max. aktive Ads</label>
+              <input type="number" name="max_active_{c['id']}" value="{c.get('max_active', 15)}" min="1" max="50">
             </div>
           </div>""" for c in campaigns_list)}
         </div>
@@ -659,6 +762,83 @@ def einstellungen():
             <label>Längengrad (Longitude)</label>
             <input type="text" name="geo_longitude" value="{sg.get('longitude', 8.2175)}" placeholder="8.2175">
           </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">⚙️ Optimizer-Logik</div>
+        <div class="grid">
+          <div class="field"><label>Freeze-Tage (1–30)</label>
+            <input type="number" name="freeze_days" value="{sop.get('freeze_days', 7)}" min="1" max="30"></div>
+          <div class="field"><label>Max. aktive Ads gesamt</label>
+            <input type="number" name="max_active_ads" value="{sop.get('max_active_ads', 15)}" min="1" max="50"></div>
+          <div class="field"><label>Batch-Größe (Ads pro Lauf)</label>
+            <input type="number" name="batch_size" value="{sop.get('batch_size', 5)}" min="1" max="10"></div>
+          <div class="field"><label>Bottom-N pausieren pro Rotation</label>
+            <input type="number" name="bottom_n" value="{sop.get('bottom_n', 3)}" min="1" max="10"></div>
+          <div class="field"><label>Zyklen bis Scale-Alert</label>
+            <input type="number" name="scale_after_cycles" value="{sop.get('scale_after_cycles', 3)}" min="1" max="20"></div>
+          <div class="field"><label>Min. Impressionen für Auswertung</label>
+            <input type="number" name="min_impressions" value="{sop.get('min_impressions', 500)}" min="50" max="5000"></div>
+          <div class="field"><label>Conversion-Trigger (Freeze-Früh-Ausstieg)</label>
+            <input type="number" name="conversions_trigger" value="{sop.get('conversions_trigger', 50)}" min="1" max="500"></div>
+          <div class="field"><label>Delay zwischen Uploads (Sek)</label>
+            <input type="number" name="upload_delay_seconds" value="{sop.get('upload_delay_seconds', 45)}" min="10" max="300"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">📊 KPI-Bewertung</div>
+        <div style="background:#f0f4ff;border:1px solid #c7d2fe;border-radius:6px;padding:10px;margin-bottom:12px;font-size:.85em;color:#555">
+          Gewichtungen sollten zusammen 1.0 (100%) ergeben.
+        </div>
+        <div class="grid">
+          <div class="field"><label>Hook Rate — Gewichtung (z.B. 0.40)</label>
+            <input type="text" name="hook_rate_weight" value="{skp.get('hook_rate_weight', 0.40)}"></div>
+          <div class="field"><label>CTR — Gewichtung (z.B. 0.40)</label>
+            <input type="text" name="ctr_weight" value="{skp.get('ctr_weight', 0.40)}"></div>
+          <div class="field"><label>CPM — Gewichtung (z.B. 0.20)</label>
+            <input type="text" name="cpm_weight" value="{skp.get('cpm_weight', 0.20)}"></div>
+          <div class="field"><label>Hook Rate Mindestwert (z.B. 0.25 = 25%)</label>
+            <input type="text" name="hook_rate_min" value="{skp.get('hook_rate_min', 0.25)}"></div>
+          <div class="field"><label>CTR Mindestwert (z.B. 0.01 = 1%)</label>
+            <input type="text" name="ctr_min" value="{skp.get('ctr_min', 0.01)}"></div>
+          <div class="field"><label>CPM Malus-Schwelle (€)</label>
+            <input type="number" name="cpm_malus_threshold" value="{skp.get('cpm_malus_threshold', 18.0)}" min="1" max="100"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">💰 Budget & Skalierung (globale Defaults)</div>
+        <div class="grid">
+          <div class="field"><label>Budget pro Ad nach Warmup (€)</label>
+            <input type="number" name="budget_per_ad_eur" value="{sbg.get('budget_per_ad_eur', 5.0)}" min="1" max="100" step="0.5"></div>
+          <div class="field"><label>Warmup-Budget neue Ads (€)</label>
+            <input type="number" name="warmup_budget_eur" value="{sbg.get('warmup_budget_eur', 3.0)}" min="1" max="50" step="0.5"></div>
+          <div class="field"><label>Warmup-Dauer (Stunden)</label>
+            <input type="number" name="warmup_hours" value="{sbg.get('warmup_hours', 48)}" min="1" max="168"></div>
+          <div class="field"><label>Scale-Budget Top-Ads (€)</label>
+            <input type="number" name="scale_budget_eur" value="{sbg.get('scale_budget_eur', 10.0)}" min="1" max="500" step="0.5"></div>
+          <div class="field"><label>Tägliches Spend-Cap gesamt (€)</label>
+            <input type="number" name="daily_spend_cap_eur" value="{sbg.get('daily_spend_cap_eur', 100.0)}" min="1" max="10000"></div>
+          <div class="field"><label>Max. Budget-Erhöhung Faktor (z.B. 2.0 = 2×)</label>
+            <input type="number" name="max_scale_multiplier" value="{sbg.get('max_scale_multiplier', 2.0)}" min="1" max="10" step="0.1"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">📉 ROAS & Account-Schutz</div>
+        <div class="grid">
+          <div class="field"><label>Mindest-ROAS (unter diesem Wert pausieren)</label>
+            <input type="number" name="min_roas" value="{srs.get('min_roas', 2.0)}" min="0" max="20" step="0.1"></div>
+          <div class="field"><label>ROAS-Prüfzeitraum (Tage)</label>
+            <input type="number" name="roas_pause_days" value="{srs.get('roas_pause_days', 3)}" min="1" max="14"></div>
+          <div class="field"><label>CPM-Anomalie-Faktor (z.B. 10 = 10× Ø)</label>
+            <input type="number" name="anomaly_cpm_factor" value="{sgu.get('anomaly_cpm_factor', 10.0)}" min="2" max="50" step="0.5"></div>
+          <div class="field"><label>Max. Ablehnungen in 24h bis Pause</label>
+            <input type="number" name="max_rejections_24h" value="{sgu.get('max_rejections_24h', 2)}" min="1" max="10"></div>
+          <div class="field"><label>Max. API-Fehler bis Pipeline-Pause</label>
+            <input type="number" name="max_api_errors_before_pause" value="{sgu.get('max_api_errors_before_pause', 3)}" min="1" max="10"></div>
         </div>
       </div>
 
