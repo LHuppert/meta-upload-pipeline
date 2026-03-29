@@ -711,7 +711,7 @@ def main():
 
     logger.info("🤖 Telegram Upload-Bot gestartet")
     logger.info(f"📅 Tagesbericht: täglich um {h:02d}:{m:02d}")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
 
 
 if __name__ == "__main__":
