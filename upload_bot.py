@@ -684,12 +684,18 @@ async def _run_weekly_review_job() -> None:
 
 
 async def _error_handler(update, context) -> None:
-    """Sendet ungefangene Bot-Fehler per Telegram."""
-    logger.error(f"Bot-Fehler: {context.error}", exc_info=context.error)
+    """Sendet ungefangene Bot-Fehler per Telegram (ausser harmlose Deploy-Konflikte)."""
+    err = context.error
+    err_str = str(err)
+    # Conflict tritt kurz beim Deploy auf wenn zwei Instanzen laufen — kein echter Fehler
+    if "Conflict" in err_str and "getUpdates" in err_str:
+        logger.warning(f"Bot-Konflikt (Deploy-Artefakt, ignoriert): {err}")
+        return
+    logger.error(f"Bot-Fehler: {err}", exc_info=err)
     try:
         await context.bot.send_message(
             chat_id=CHAT_ID,
-            text=f"🚨 *Bot-Fehler*\n\n`{context.error}`",
+            text=f"🚨 *Bot-Fehler*\n\n`{err}`",
             parse_mode="Markdown"
         )
     except Exception:
