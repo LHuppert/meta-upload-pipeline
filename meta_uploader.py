@@ -195,6 +195,36 @@ def meta_request(method: str, endpoint: str, **kwargs) -> dict:
     raise RuntimeError(f"Meta API nach {MAX_RETRIES} Versuchen fehlgeschlagen: {last_error}")
 
 
+# ─── Geo-Ausschluss Helper ───────────────────────────────────────────────────
+
+def get_excluded_geo_locations() -> dict | None:
+    """
+    Liest Geo-Ausschluss aus settings_manager.
+    Gibt einen Meta-API-kompatiblen excluded_geo_locations-Dict zurück
+    oder None wenn deaktiviert.
+
+    Wird beim Erstellen von Ad Sets als Targeting-Parameter übergeben:
+    adset_params["targeting"]["excluded_geo_locations"] = get_excluded_geo_locations()
+    """
+    try:
+        from settings_manager import settings
+        geo = settings.get("geo_exclusion", {})
+        if not geo.get("enabled", False):
+            return None
+        return {
+            "custom_locations": [{
+                "latitude":        float(geo.get("latitude",  49.7153)),
+                "longitude":       float(geo.get("longitude", 8.2175)),
+                "radius":          int(geo.get("radius_km",  25)),
+                "distance_unit":   "kilometer",
+            }],
+            "location_types": ["home", "recent"],
+        }
+    except Exception as e:
+        logger.warning(f"Geo-Ausschluss konnte nicht gelesen werden: {e}")
+        return None
+
+
 # ─── Video-Upload ─────────────────────────────────────────────────────────────
 
 def upload_video(video_path: Path) -> str:

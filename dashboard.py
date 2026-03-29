@@ -464,6 +464,18 @@ def einstellungen():
             rt = request.form.get("daily_report_time", "08:00")
             settings.set("schedule.daily_report_time", rt, "dashboard")
 
+            # Geo-Ausschluss
+            settings.set("geo_exclusion.enabled",       "geo_exclusion_enabled" in request.form, "dashboard")
+            settings.set("geo_exclusion.location_name", request.form.get("geo_location_name", "Gundersheim"), "dashboard")
+            settings.set("geo_exclusion.zip_code",      request.form.get("geo_zip_code", "67598"), "dashboard")
+            settings.set("geo_exclusion.country",       request.form.get("geo_country", "DE"), "dashboard")
+            try:
+                settings.set("geo_exclusion.radius_km", int(request.form.get("geo_radius_km", 25)), "dashboard")
+                settings.set("geo_exclusion.latitude",  float(request.form.get("geo_latitude", 49.7153)), "dashboard")
+                settings.set("geo_exclusion.longitude", float(request.form.get("geo_longitude", 8.2175)), "dashboard")
+            except (ValueError, TypeError):
+                errors.append("Geo-Koordinaten: Ungültige Werte")
+
             if errors:
                 flash("Fehler: " + " | ".join(errors), "danger")
             else:
@@ -552,6 +564,42 @@ def einstellungen():
           <input type="text" name="daily_report_time" value="{sc.get('daily_report_time', '08:00')}" placeholder="08:00">
         </div>
       </div>
+
+        <div class="section-title">📍 Geo-Ausschluss (kein Targeting im Heimatort)</div>
+        <div class="toggle">
+          <input type="checkbox" name="geo_exclusion_enabled" id="geo_exclusion_enabled" {checked(s.get('geo_exclusion', {{}}).get('enabled', False))}>
+          <label for="geo_exclusion_enabled">Bestimmten Umkreis von Werbung ausschließen</label>
+        </div>
+        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:12px;margin:8px 0;font-size:.85em;color:#555">
+          ℹ️ Mit dieser Einstellung werden keine Anzeigen an Personen in deiner Nähe ausgespielt.
+          Wird beim Erstellen von Ad Sets automatisch als Geo-Ausschluss übergeben.
+        </div>
+        <div class="grid">
+          <div class="field">
+            <label>Ortsname</label>
+            <input type="text" name="geo_location_name" value="{s.get('geo_exclusion', {{}}).get('location_name', 'Gundersheim')}" placeholder="Gundersheim">
+          </div>
+          <div class="field">
+            <label>PLZ</label>
+            <input type="text" name="geo_zip_code" value="{s.get('geo_exclusion', {{}}).get('zip_code', '67598')}" placeholder="67598">
+          </div>
+          <div class="field">
+            <label>Land (ISO-Code)</label>
+            <input type="text" name="geo_country" value="{s.get('geo_exclusion', {{}}).get('country', 'DE')}" placeholder="DE" style="max-width:80px">
+          </div>
+          <div class="field">
+            <label>Radius (km, 1–80)</label>
+            <input type="number" name="geo_radius_km" value="{s.get('geo_exclusion', {{}}).get('radius_km', 25)}" min="1" max="80">
+          </div>
+          <div class="field">
+            <label>Breitengrad (Latitude)</label>
+            <input type="text" name="geo_latitude" value="{s.get('geo_exclusion', {{}}).get('latitude', 49.7153)}" placeholder="49.7153">
+          </div>
+          <div class="field">
+            <label>Längengrad (Longitude)</label>
+            <input type="text" name="geo_longitude" value="{s.get('geo_exclusion', {{}}).get('longitude', 8.2175)}" placeholder="8.2175">
+          </div>
+        </div>
 
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <button type="submit" class="btn btn-primary">💾 Speichern</button>

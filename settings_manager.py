@@ -52,6 +52,15 @@ DEFAULTS = {
     "meta": {
         "api_version": "v21.0",
     },
+    "geo_exclusion": {
+        "enabled":       False,
+        "location_name": "Gundersheim",
+        "zip_code":      "67598",
+        "latitude":      49.7153,
+        "longitude":     8.2175,
+        "radius_km":     25,
+        "country":       "DE",
+    },
     "updated_at":  None,
     "updated_by":  None,
 }
