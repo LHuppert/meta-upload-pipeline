@@ -52,6 +52,15 @@ DEFAULTS = {
     "meta": {
         "api_version": "v21.0",
     },
+    "campaigns": {
+        "active": "testing_inhouse",
+        "average_order_value": 80,
+        "list": [
+            {"id": "testing_inhouse", "name": "Testing Inhouse",  "description": "Eigene Videos — neues Weinpaket testen", "meta_campaign_id": "", "daily_budget": "10"},
+            {"id": "testing_cutter",  "name": "Testing Cutter",   "description": "Cutter-Videos testen",                   "meta_campaign_id": "", "daily_budget": "10"},
+            {"id": "scaling",         "name": "Scaling",          "description": "Top-Performer skalieren",                "meta_campaign_id": "", "daily_budget": "50"},
+        ],
+    },
     "geo_exclusion": {
         "enabled":       False,
         "location_name": "Gundersheim",

@@ -472,6 +472,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data    = query.data
     action, payload = data.split("|", 1)
+
+    # Test-Upload Callback
+    if action == "testup":
+        if payload == "cancel":
+            await query.edit_message_text("❌ Test-Upload abgebrochen.")
+            return
+        # Echten Upload starten
+        await query.edit_message_text(f"⏳ Lade `{payload}` jetzt hoch...", parse_mode="Markdown")
+        await run_onedrive_sync(context.application, force_filename=payload)
+        return
+
     pending = load_pending()
 
     if action == "approve":
@@ -660,7 +671,7 @@ async def send_weekly_report(context):
 
 # ─── OneDrive Auto-Upload ─────────────────────────────────────────────────────
 
-async def run_onedrive_sync(app_or_context):
+async def run_onedrive_sync(app_or_context, force_filename: str = None):
     """Prueft OneDrive auf neue Videos und laedt sie automatisch zu Meta hoch."""
     if settings.is_paused():
         logger.info("OneDrive Sync uebersprungen — Pause aktiv")
@@ -669,9 +680,17 @@ async def run_onedrive_sync(app_or_context):
     bot = app_or_context.bot if hasattr(app_or_context, "bot") else app_or_context
 
     try:
-        from onedrive_sync import sync_onedrive
+        from onedrive_sync import sync_onedrive, list_onedrive_files, download_file
         import random as _random
-        new_videos = sync_onedrive()
+
+        if force_filename:
+            # Gezielter Download eines bestimmten Videos (für /testupload)
+            files = list_onedrive_files()
+            item = next((f for f in files if f.get("name") == force_filename), None)
+            new_videos = [download_file(item)] if item else []
+            new_videos = [v for v in new_videos if v]
+        else:
+            new_videos = sync_onedrive()
     except Exception as e:
         logger.error(f"OneDrive Sync Fehler: {e}")
         return
@@ -697,18 +716,24 @@ async def run_onedrive_sync(app_or_context):
         filename = Path(r["path"]).name
         if r["status"] == "success":
             texts = r.get("ad_texts", {})
-            pt = texts.get("primary_text", "")
-            hl = texts.get("headline", "")
+            pt   = texts.get("primary_text", "—")
+            hl   = texts.get("headline", "—")
+            desc = texts.get("description", "—")
+            active_campaign = settings.get("campaigns.active", "testing_inhouse")
+            campaign_list   = settings.get("campaigns.list", [])
+            camp_name = next((c["name"] for c in campaign_list if c["id"] == active_campaign), active_campaign)
             msg = (
                 f"✅ *Video hochgeladen!*\n\n"
                 f"📁 `{filename}`\n"
                 f"🆔 Meta-ID: `{r['video_id']}`\n"
+                f"🎯 Kampagne: *{camp_name}*\n\n"
+                f"━━━━ *Verwendete Meta Ad Texte* ━━━━\n\n"
+                f"*📢 Primary Text:*\n{pt}\n\n"
+                f"*🏷️ Headline:*\n{hl}\n\n"
+                f"*📝 Description:*\n{desc}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Bei Bedarf im Meta Ads Manager löschen."
             )
-            if hl:
-                msg += f"\n📝 *Headline:* {hl}"
-            if pt:
-                msg += f"\n💬 *Text:* {pt}"
-            msg += "\n\nBei Bedarf in Meta Ads Manager löschen."
             safety_monitor.record_success()
         else:
             msg = (
@@ -727,6 +752,57 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("☁️ OneDrive wird jetzt manuell geprüft...")
     await run_onedrive_sync(context.application)
+
+
+async def cmd_testupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Zeigt Textvorschau für ein zufälliges OneDrive-Video — ohne Upload."""
+    if update.message.chat_id != CHAT_ID:
+        return
+    await update.message.reply_text("🧪 Analysiere OneDrive-Ordner...")
+    try:
+        from onedrive_sync import list_onedrive_files
+        from text_generator import generate_ad_texts
+        import random as _random
+
+        files = list_onedrive_files()
+        if not files:
+            await update.message.reply_text("❌ Keine Videos in OneDrive gefunden.\n\nOneDrive Share-Link gesetzt? /einstellungen")
+            return
+
+        item = _random.choice(files)
+        filename = item.get("name", "video.mp4")
+        size_mb  = item.get("size", 0) / 1024 / 1024
+
+        await update.message.reply_text(f"📝 KI generiert Texte für `{filename}`...", parse_mode="Markdown")
+        texts = generate_ad_texts(filename)
+
+        active_campaign = settings.get("campaigns.active", "testing_inhouse")
+        campaign_list   = settings.get("campaigns.list", [])
+        camp_name = next((c["name"] for c in campaign_list if c["id"] == active_campaign), active_campaign)
+
+        msg = (
+            f"🧪 *TEST-VORSCHAU* — noch nicht hochgeladen\n\n"
+            f"📁 Datei: `{filename}`\n"
+            f"📦 Größe: {size_mb:.1f} MB\n"
+            f"🎯 Kampagne: *{camp_name}*\n\n"
+            f"━━━━ *Meta Ad Texte (KI)* ━━━━\n\n"
+            f"*📢 Primary Text:*\n{texts.get('primary_text', '—')}\n\n"
+            f"*🏷️ Headline:*\n{texts.get('headline', '—')}\n\n"
+            f"*📝 Description:*\n{texts.get('description', '—')}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Texte OK? Jetzt wirklich hochladen?"
+        )
+
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Ja, hochladen", callback_data=f"testup|{filename}"),
+            InlineKeyboardButton("❌ Abbrechen",     callback_data="testup|cancel"),
+        ]])
+
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=keyboard)
+
+    except Exception as e:
+        logger.error(f"testupload Fehler: {e}")
+        await update.message.reply_text(f"❌ Fehler: {e}")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -754,6 +830,7 @@ def main():
     app.add_handler(CommandHandler("hochladen",    cmd_hochladen))
     app.add_handler(CommandHandler("queue",        cmd_queue))
     app.add_handler(CommandHandler("sync",         cmd_sync))
+    app.add_handler(CommandHandler("testupload",   cmd_testupload))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video_upload))
 

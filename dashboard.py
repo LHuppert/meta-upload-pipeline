@@ -464,6 +464,27 @@ def einstellungen():
             rt = request.form.get("daily_report_time", "08:00")
             settings.set("schedule.daily_report_time", rt, "dashboard")
 
+            # Kampagnen-Einstellungen
+            active_campaign = request.form.get("active_campaign", "")
+            if active_campaign:
+                settings.set("campaigns.active", active_campaign, "dashboard")
+            try:
+                aov = int(request.form.get("average_order_value", 80))
+                settings.set("campaigns.average_order_value", aov, "dashboard")
+            except (ValueError, TypeError):
+                pass
+            # Kampagnen-IDs speichern
+            campaigns_list = settings.get("campaigns.list", [])
+            for camp in campaigns_list:
+                cid = camp["id"]
+                meta_id = request.form.get(f"meta_campaign_id_{cid}", "").strip()
+                budget  = request.form.get(f"daily_budget_{cid}", "").strip()
+                if meta_id:
+                    camp["meta_campaign_id"] = meta_id
+                if budget:
+                    camp["daily_budget"] = budget
+            settings.set("campaigns.list", campaigns_list, "dashboard")
+
             # Geo-Ausschluss
             settings.set("geo_exclusion.enabled",       "geo_exclusion_enabled" in request.form, "dashboard")
             settings.set("geo_exclusion.location_name", request.form.get("geo_location_name", "Gundersheim"), "dashboard")
@@ -487,6 +508,9 @@ def einstellungen():
     sf = s.get("safety", {})
     sc = s.get("schedule", {})
     sg = s.get("geo_exclusion", {})
+    scampaigns = s.get("campaigns", {})
+    campaigns_list = scampaigns.get("list", [])
+    active_campaign = scampaigns.get("active", "testing_inhouse")
 
     def checked(val):
         return "checked" if val else ""
@@ -566,6 +590,41 @@ def einstellungen():
         </div>
       </div>
 
+      <div class="card">
+        <div class="section-title">🎯 Kampagnen-Einstellungen</div>
+        <div class="grid">
+          <div class="field">
+            <label>Aktive Kampagne</label>
+            <select name="active_campaign">
+              {''.join(f'<option value="{c["id"]}" {"selected" if c["id"] == active_campaign else ""}>{c["name"]} — {c["description"]}</option>' for c in campaigns_list)}
+            </select>
+          </div>
+          <div class="field">
+            <label>Ø Bestellwert (AOV in €)</label>
+            <input type="number" name="average_order_value" value="{scampaigns.get('average_order_value', 80)}" min="1" max="9999">
+          </div>
+        </div>
+        <div style="background:#f0f4ff;border:1px solid #c7d2fe;border-radius:6px;padding:12px;margin:12px 0;font-size:.85em;color:#555">
+          ℹ️ Die aktive Kampagne bestimmt, welcher Meta-Kampagne neue Videos automatisch zugeordnet werden.
+          Meta Kampagnen-IDs eingetragen → werden beim Upload direkt genutzt.
+        </div>
+        <div class="section-title" style="margin-top:8px">Meta Kampagnen-IDs &amp; Budgets</div>
+        <div class="grid">
+          {''.join(f"""<div class="card" style="background:#f8f9fc;padding:16px">
+            <div style="font-weight:600;margin-bottom:8px">{c["name"]}</div>
+            <div class="field">
+              <label>Meta Kampagnen-ID</label>
+              <input type="text" name="meta_campaign_id_{c['id']}" value="{c.get('meta_campaign_id', '')}" placeholder="123456789">
+            </div>
+            <div class="field">
+              <label>Tagesbudget (€)</label>
+              <input type="text" name="daily_budget_{c['id']}" value="{c.get('daily_budget', '10')}" placeholder="10">
+            </div>
+          </div>""" for c in campaigns_list)}
+        </div>
+      </div>
+
+      <div class="card">
         <div class="section-title">📍 Geo-Ausschluss (kein Targeting im Heimatort)</div>
         <div class="toggle">
           <input type="checkbox" name="geo_exclusion_enabled" id="geo_exclusion_enabled" {checked(sg.get('enabled', False))}>
@@ -601,6 +660,7 @@ def einstellungen():
             <input type="text" name="geo_longitude" value="{sg.get('longitude', 8.2175)}" placeholder="8.2175">
           </div>
         </div>
+      </div>
 
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <button type="submit" class="btn btn-primary">💾 Speichern</button>
