@@ -595,6 +595,29 @@ def einstellungen():
     campaigns_list  = scampaigns.get("list", [])
     active_campaign = scampaigns.get("active", "testing_inhouse")
 
+    # Pre-compute campaign cards to avoid nested f-string (Python 3.11 incompatible)
+    _campaign_cards = ""
+    for _c in campaigns_list:
+        _campaign_cards += (
+            f'<div class="card" style="background:#f8f9fc;padding:16px">'
+            f'<div style="font-weight:600;margin-bottom:10px">{_c["name"]}</div>'
+            f'<div class="field"><label>Meta Kampagnen-ID</label>'
+            f'<input type="text" name="meta_campaign_id_{_c["id"]}" value="{_c.get("meta_campaign_id", "")}" placeholder="123456789"></div>'
+            f'<div class="field"><label>Tagesbudget gesamt (EUR)</label>'
+            f'<input type="text" name="daily_budget_{_c["id"]}" value="{_c.get("daily_budget", "10")}" placeholder="10"></div>'
+            f'<div class="field"><label>Budget pro Ad / Tag (EUR)</label>'
+            f'<input type="number" name="budget_per_ad_{_c["id"]}" value="{_c.get("budget_per_ad_eur", 5.0)}" min="1" max="500" step="0.5"></div>'
+            f'<div class="field"><label>Warmup-Budget neue Ads (EUR)</label>'
+            f'<input type="number" name="warmup_budget_{_c["id"]}" value="{_c.get("warmup_budget_eur", 3.0)}" min="1" max="100" step="0.5"></div>'
+            f'<div class="field"><label>Spend-Cap / Tag (EUR)</label>'
+            f'<input type="number" name="spend_cap_{_c["id"]}" value="{_c.get("spend_cap_eur", 100.0)}" min="1" max="10000"></div>'
+            f'<div class="field"><label>Mindest-ROAS</label>'
+            f'<input type="number" name="min_roas_{_c["id"]}" value="{_c.get("min_roas", 2.0)}" min="0" max="20" step="0.1"></div>'
+            f'<div class="field"><label>Max. aktive Ads</label>'
+            f'<input type="number" name="max_active_{_c["id"]}" value="{_c.get("max_active", 15)}" min="1" max="50"></div>'
+            f'</div>'
+        )
+
     def checked(val):
         return "checked" if val else ""
 
@@ -693,37 +716,7 @@ def einstellungen():
         </div>
         <div class="section-title" style="margin-top:8px">Meta Kampagnen-IDs &amp; Budgets</div>
         <div class="grid">
-          {''.join(f"""<div class="card" style="background:#f8f9fc;padding:16px">
-            <div style="font-weight:600;margin-bottom:10px">{c["name"]}</div>
-            <div class="field">
-              <label>Meta Kampagnen-ID</label>
-              <input type="text" name="meta_campaign_id_{c['id']}" value="{c.get('meta_campaign_id', '')}" placeholder="123456789">
-            </div>
-            <div class="field">
-              <label>Tagesbudget gesamt (EUR)</label>
-              <input type="text" name="daily_budget_{c['id']}" value="{c.get('daily_budget', '10')}" placeholder="10">
-            </div>
-            <div class="field">
-              <label>Budget pro Ad / Tag (EUR)</label>
-              <input type="number" name="budget_per_ad_{c['id']}" value="{c.get('budget_per_ad_eur', 5.0)}" min="1" max="500" step="0.5">
-            </div>
-            <div class="field">
-              <label>Warmup-Budget neue Ads (EUR)</label>
-              <input type="number" name="warmup_budget_{c['id']}" value="{c.get('warmup_budget_eur', 3.0)}" min="1" max="100" step="0.5">
-            </div>
-            <div class="field">
-              <label>Spend-Cap / Tag (EUR)</label>
-              <input type="number" name="spend_cap_{c['id']}" value="{c.get('spend_cap_eur', 100.0)}" min="1" max="10000">
-            </div>
-            <div class="field">
-              <label>Mindest-ROAS</label>
-              <input type="number" name="min_roas_{c['id']}" value="{c.get('min_roas', 2.0)}" min="0" max="20" step="0.1">
-            </div>
-            <div class="field">
-              <label>Max. aktive Ads</label>
-              <input type="number" name="max_active_{c['id']}" value="{c.get('max_active', 15)}" min="1" max="50">
-            </div>
-          </div>""" for c in campaigns_list)}
+          {_campaign_cards}
         </div>
       </div>
 
