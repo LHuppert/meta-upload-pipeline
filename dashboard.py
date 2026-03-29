@@ -223,7 +223,7 @@ BASE_HTML = """<!DOCTYPE html>
     <div class="alert alert-{{ cat }}">{{ msg }}</div>
   {% endfor %}
 {% endwith %}
-{{ content }}
+{{ content | safe }}
 </div>
 <script>
 // Auto-Refresh Status alle 30 Sekunden
