@@ -714,6 +714,7 @@ async def run_onedrive_sync(app_or_context, force_filename: str = None):
 
     try:
         from onedrive_sync import sync_onedrive, list_onedrive_files, download_file
+        from gdrive_sync import sync_gdrive
         import random as _random
 
         if force_filename:
@@ -723,7 +724,7 @@ async def run_onedrive_sync(app_or_context, force_filename: str = None):
             new_videos = [download_file(item)] if item else []
             new_videos = [v for v in new_videos if v]
         else:
-            new_videos = sync_onedrive()
+            new_videos = sync_onedrive() + sync_gdrive()
     except Exception as e:
         logger.error(f"OneDrive Sync Fehler: {e}")
         try:
