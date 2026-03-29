@@ -669,6 +669,20 @@ async def send_weekly_report(context):
     await context.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
 
 
+# ─── Weekly Review Job ───────────────────────────────────────────────────────
+
+async def _run_weekly_review_job() -> None:
+    """Führt weekly_review.run_weekly_review() im Hintergrund aus."""
+    try:
+        from weekly_review import run_weekly_review
+        import asyncio
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, run_weekly_review)
+        logger.info("Weekly Review abgeschlossen")
+    except Exception as e:
+        logger.error(f"Weekly Review Fehler: {e}")
+
+
 # ─── OneDrive Auto-Upload ─────────────────────────────────────────────────────
 
 async def run_onedrive_sync(app_or_context, force_filename: str = None):
@@ -813,7 +827,41 @@ def main():
     if not CHAT_ID:
         raise ValueError("TELEGRAM_CHAT_ID fehlt in .env")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # APScheduler — im post_init starten damit der asyncio-Loop bereits läuft
+    scheduler = AsyncIOScheduler()
+
+    def get_report_hour():
+        t = settings.get("schedule.daily_report_time", "08:00")
+        try:
+            h, m = t.split(":")
+            return int(h), int(m)
+        except Exception:
+            return 8, 0
+
+    async def _post_init(application: Application) -> None:
+        h, m = get_report_hour()
+        # Async-Funktionen direkt übergeben — AsyncIOScheduler handled coroutines korrekt
+        scheduler.add_job(
+            send_daily_report, "cron",
+            args=[application], hour=h, minute=m, id="daily_report"
+        )
+        scheduler.add_job(
+            send_weekly_report, "cron",
+            args=[application], day_of_week="mon", hour=9, minute=0, id="weekly_report"
+        )
+        scheduler.add_job(
+            run_onedrive_sync, "interval",
+            args=[application], minutes=15, id="onedrive_sync"
+        )
+        # Weekly Review jeden Montag 08:00 UTC
+        scheduler.add_job(
+            _run_weekly_review_job, "cron",
+            day_of_week="mon", hour=8, minute=0, id="weekly_review"
+        )
+        scheduler.start()
+        logger.info(f"📅 Scheduler gestartet — Tagesbericht: {h:02d}:{m:02d}")
+
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     # Commands registrieren
     app.add_handler(CommandHandler("start",        cmd_start))
@@ -834,35 +882,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video_upload))
 
-    # APScheduler für automatische Reports + OneDrive Sync
-    scheduler = AsyncIOScheduler()
-
-    def get_report_hour():
-        t = settings.get("schedule.daily_report_time", "08:00")
-        try:
-            h, m = t.split(":")
-            return int(h), int(m)
-        except Exception:
-            return 8, 0
-
-    h, m = get_report_hour()
-    scheduler.add_job(
-        lambda: asyncio.create_task(send_daily_report(app)),
-        trigger="cron", hour=h, minute=m, id="daily_report"
-    )
-    scheduler.add_job(
-        lambda: asyncio.create_task(send_weekly_report(app)),
-        trigger="cron", day_of_week="mon", hour=9, minute=0, id="weekly_report"
-    )
-    # OneDrive Sync alle 15 Minuten
-    scheduler.add_job(
-        lambda: asyncio.create_task(run_onedrive_sync(app)),
-        trigger="interval", minutes=15, id="onedrive_sync"
-    )
-    scheduler.start()
-
     logger.info("🤖 Telegram Upload-Bot gestartet")
-    logger.info(f"📅 Tagesbericht: täglich um {h:02d}:{m:02d}")
     logger.info("☁️ OneDrive Sync: alle 15 Minuten")
     app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
 
