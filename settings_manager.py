@@ -106,9 +106,9 @@ DEFAULTS = {
         "active": "testing_inhouse",
         "average_order_value": 80,
         "list": [
-            {"id": "testing_inhouse", "name": "Testing Inhouse", "description": "Eigene Videos — neues Weinpaket testen", "meta_campaign_id": "", "daily_budget": "10", "budget_per_ad_eur": 5.0, "warmup_budget_eur": 3.0, "spend_cap_eur": 50.0,  "min_roas": 2.0, "max_active": 15},
-            {"id": "testing_cutter",  "name": "Testing Cutter",  "description": "Cutter-Videos testen",                   "meta_campaign_id": "", "daily_budget": "10", "budget_per_ad_eur": 5.0, "warmup_budget_eur": 3.0, "spend_cap_eur": 50.0,  "min_roas": 2.0, "max_active": 15},
-            {"id": "scaling",         "name": "Scaling",         "description": "Top-Performer skalieren",                "meta_campaign_id": "", "daily_budget": "50", "budget_per_ad_eur": 10.0, "warmup_budget_eur": 5.0, "spend_cap_eur": 100.0, "min_roas": 3.0, "max_active": 10},
+            {"id": "testing_inhouse", "name": "Testing Inhouse", "description": "Eigene Videos — neues Weinpaket testen", "meta_campaign_id": "120242366310850224", "daily_budget": "10", "budget_per_ad_eur": 5.0, "warmup_budget_eur": 3.0, "spend_cap_eur": 50.0,  "min_roas": 2.0, "max_active": 15},
+            {"id": "testing_cutter",  "name": "Testing Cutter",  "description": "Cutter-Videos testen",                   "meta_campaign_id": "120242366405150224", "daily_budget": "10", "budget_per_ad_eur": 5.0, "warmup_budget_eur": 3.0, "spend_cap_eur": 50.0,  "min_roas": 2.0, "max_active": 15},
+            {"id": "scaling",         "name": "Scaling",         "description": "Top-Performer skalieren",                "meta_campaign_id": "120242366469030224", "daily_budget": "50", "budget_per_ad_eur": 10.0, "warmup_budget_eur": 5.0, "spend_cap_eur": 100.0, "min_roas": 3.0, "max_active": 10},
         ],
     },
     "geo_exclusion": {
