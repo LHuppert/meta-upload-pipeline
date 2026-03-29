@@ -22,9 +22,21 @@ def run_onedrive_sync():
         from onedrive_sync import sync_onedrive
         result = sync_onedrive()
         if result["downloaded"] > 0:
-            logger.info(f"OneDrive: {result['downloaded']} neue Videos heruntergeladen")
+            logger.info(f"OneDrive: {result['downloaded']} neue Videos heruntergeladen — starte Upload")
+            # Automatisch hochladen
+            threading.Thread(target=run_meta_upload, daemon=True).start()
     except Exception as e:
         logger.error(f"OneDrive-Sync Fehler: {e}")
+
+
+def run_meta_upload():
+    """Meta-Upload im Hintergrund starten."""
+    try:
+        from meta_uploader import run_upload_batch
+        logger.info("Meta-Upload gestartet...")
+        run_upload_batch()
+    except Exception as e:
+        logger.error(f"Meta-Upload Fehler: {e}")
 
 
 def run_dashboard():

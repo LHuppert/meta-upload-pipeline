@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────────
 
 ONEDRIVE_SHARE_URL = os.getenv("ONEDRIVE_SHARE_URL", "")
-OUTPUT_DIR         = Path(os.getenv("DATA_DIR", ".")) / "output"
+OUTPUT_DIR         = Path(os.getenv("DATA_DIR", ".")) / "approved"
 PROCESSED_FILE     = Path(os.getenv("DATA_DIR", ".")) / "logs" / "onedrive_processed.json"
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
