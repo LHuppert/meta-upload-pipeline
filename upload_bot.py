@@ -1,19 +1,16 @@
 """
-Telegram Bot — Upload Approval Workflow + Reports + Einstellungen
+Telegram Bot — Auto-Upload + OneDrive Sync + Reports
 
 Workflow:
-1. Videos landen in output/ (von Render-Pipeline)
-2. Bot schickt alle Videos per Telegram zur Prüfung
-3. Du gibst einzeln oder alle frei
-4. Freigegebene Videos → approved/ Ordner
-5. meta_uploader.py lädt sie sequenziell hoch
+1. OneDrive-Ordner wird alle 15 Min geprueft
+2. Neue Videos werden automatisch zu Meta hochgeladen (zufaellige Reihenfolge)
+3. Nach jedem Upload: Telegram-Benachrichtigung mit Dateiname + Meta-ID
+4. Du kannst das Video in Meta Ads Manager pruefen und bei Bedarf loeschen
 
 Commands:
 /start /hilfe       — Befehlsübersicht
-/prüfen             — Videos zur Freigabe anzeigen
 /status             — Heutiger Stand
 /queue              — Warteschlange
-/hochladen          — Freigegebene Videos hochladen
 /health             — Account Health
 /report             — Sofort-Bericht senden
 /pause [Grund]      — Uploads sofort pausieren
@@ -21,6 +18,7 @@ Commands:
 /einstellungen      — Aktuelle Einstellungen anzeigen
 /set KEY WERT       — Einstellung ändern
 /dashboard          — Dashboard-URL anzeigen
+/sync               — OneDrive jetzt manuell pruefen
 """
 
 import os
@@ -660,6 +658,77 @@ async def send_weekly_report(context):
     await context.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
 
 
+# ─── OneDrive Auto-Upload ─────────────────────────────────────────────────────
+
+async def run_onedrive_sync(app_or_context):
+    """Prueft OneDrive auf neue Videos und laedt sie automatisch zu Meta hoch."""
+    if settings.is_paused():
+        logger.info("OneDrive Sync uebersprungen — Pause aktiv")
+        return
+
+    bot = app_or_context.bot if hasattr(app_or_context, "bot") else app_or_context
+
+    try:
+        from onedrive_sync import sync_onedrive
+        import random as _random
+        new_videos = sync_onedrive()
+    except Exception as e:
+        logger.error(f"OneDrive Sync Fehler: {e}")
+        return
+
+    if not new_videos:
+        logger.info("OneDrive Sync: keine neuen Videos")
+        return
+
+    # Zufaellige Reihenfolge
+    _random.shuffle(new_videos)
+    logger.info(f"OneDrive Sync: {len(new_videos)} neue Videos → Auto-Upload startet")
+
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text=f"☁️ *OneDrive Sync*: {len(new_videos)} neue Video(s) gefunden — Upload startet...",
+        parse_mode="Markdown"
+    )
+
+    loop = asyncio.get_event_loop()
+    results, _ = await loop.run_in_executor(None, run_upload_batch, new_videos)
+
+    for r in results:
+        filename = Path(r["path"]).name
+        if r["status"] == "success":
+            texts = r.get("ad_texts", {})
+            pt = texts.get("primary_text", "")
+            hl = texts.get("headline", "")
+            msg = (
+                f"✅ *Video hochgeladen!*\n\n"
+                f"📁 `{filename}`\n"
+                f"🆔 Meta-ID: `{r['video_id']}`\n"
+            )
+            if hl:
+                msg += f"\n📝 *Headline:* {hl}"
+            if pt:
+                msg += f"\n💬 *Text:* {pt}"
+            msg += "\n\nBei Bedarf in Meta Ads Manager löschen."
+            safety_monitor.record_success()
+        else:
+            msg = (
+                f"❌ *Upload fehlgeschlagen*\n\n"
+                f"📁 `{filename}`\n"
+                f"Fehler: {r.get('error', '?')}"
+            )
+            safety_monitor.record_error(r.get("error", ""))
+
+        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
+
+
+async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manueller OneDrive Sync."""
+    if update.message.chat_id != CHAT_ID:
+        return
+    await update.message.reply_text("☁️ OneDrive wird jetzt manuell geprüft...")
+    await run_onedrive_sync(context.application)
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -684,10 +753,11 @@ def main():
     app.add_handler(CommandHandler("prufen",       cmd_pruefen))
     app.add_handler(CommandHandler("hochladen",    cmd_hochladen))
     app.add_handler(CommandHandler("queue",        cmd_queue))
+    app.add_handler(CommandHandler("sync",         cmd_sync))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video_upload))
 
-    # APScheduler für automatische Reports
+    # APScheduler für automatische Reports + OneDrive Sync
     scheduler = AsyncIOScheduler()
 
     def get_report_hour():
@@ -707,10 +777,16 @@ def main():
         lambda: asyncio.create_task(send_weekly_report(app)),
         trigger="cron", day_of_week="mon", hour=9, minute=0, id="weekly_report"
     )
+    # OneDrive Sync alle 15 Minuten
+    scheduler.add_job(
+        lambda: asyncio.create_task(run_onedrive_sync(app)),
+        trigger="interval", minutes=15, id="onedrive_sync"
+    )
     scheduler.start()
 
     logger.info("🤖 Telegram Upload-Bot gestartet")
     logger.info(f"📅 Tagesbericht: täglich um {h:02d}:{m:02d}")
+    logger.info("☁️ OneDrive Sync: alle 15 Minuten")
     app.run_polling(allowed_updates=Update.ALL_TYPES, stop_signals=None)
 
 

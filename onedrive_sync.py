@@ -1,16 +1,7 @@
 """
-onedrive_sync.py — Liest Videos aus einem geteilten OneDrive-Ordner
-und stellt sie für den Meta-Upload bereit.
+onedrive_sync.py — Laedt Videos aus einem geteilten OneDrive-Ordner herunter.
 
-Workflow:
-1. Schaut alle X Minuten in den OneDrive-Ordner
-2. Lädt neue Videos herunter (die noch nicht verarbeitet wurden)
-3. Legt sie in output/ ab (von dort: Bot-Freigabe → Meta-Upload)
-4. Trackt verarbeitete Dateien in logs/onedrive_processed.json
-
-Ordnerstruktur OneDrive:
-  videoupload/          ← Videos hierher legen
-  videoupload/hochgeladen/  ← nach Upload (manuell verschieben bis OAuth steht)
+Kein Azure-Login noetig — nur ein oeffentlicher "Jeder mit dem Link"-Share-Link.
 """
 
 import os
@@ -19,160 +10,97 @@ import base64
 import logging
 import requests
 from pathlib import Path
-from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────────────────
-
 ONEDRIVE_SHARE_URL = os.getenv("ONEDRIVE_SHARE_URL", "")
-OUTPUT_DIR         = Path(os.getenv("DATA_DIR", ".")) / "approved"
-PROCESSED_FILE     = Path(os.getenv("DATA_DIR", ".")) / "logs" / "onedrive_processed.json"
+DATA_DIR    = Path(os.getenv("DATA_DIR", "/tmp"))
+PROCESSED   = DATA_DIR / "onedrive_processed.json"
+DOWNLOAD_DIR = DATA_DIR / "downloads"
 
-GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-
-
-# ── Hilfsfunktionen ───────────────────────────────────────────────────────────
-
-def encode_share_url(share_url: str) -> str:
-    """OneDrive Share-URL → Graph-API Share-ID kodieren."""
-    b64 = base64.b64encode(share_url.encode()).decode()
-    b64_url = b64.rstrip("=").replace("+", "-").replace("/", "_")
-    return f"u!{b64_url}"
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
 
-def load_processed() -> set:
-    if PROCESSED_FILE.exists():
-        try:
-            data = json.loads(PROCESSED_FILE.read_text(encoding="utf-8"))
-            return set(data.get("processed", []))
-        except Exception:
-            return set()
+def _encode_share_url(url: str) -> str:
+    encoded = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+    return f"u!{encoded}"
+
+
+def _load_processed() -> set:
+    try:
+        if PROCESSED.exists():
+            return set(json.loads(PROCESSED.read_text(encoding="utf-8")))
+    except Exception:
+        pass
     return set()
 
 
-def save_processed(processed: set):
-    PROCESSED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROCESSED_FILE.write_text(
-        json.dumps({"processed": list(processed), "updated": datetime.now().isoformat()},
-                   indent=2, ensure_ascii=False),
-        encoding="utf-8"
-    )
+def _save_processed(ids: set):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    PROCESSED.write_text(json.dumps(list(ids), indent=2), encoding="utf-8")
 
 
-# ── Graph API ────────────────────────────────────────────────────────────────
-
-def list_files_in_share(share_url: str) -> list:
-    """Dateien im geteilten Ordner auflisten (kein Auth nötig für öffentliche Links)."""
-    share_id = encode_share_url(share_url)
-    url = f"{GRAPH_BASE}/shares/{share_id}/driveItem/children"
-    headers = {"Accept": "application/json"}
-
+def list_onedrive_files() -> list:
+    if not ONEDRIVE_SHARE_URL:
+        logger.warning("ONEDRIVE_SHARE_URL nicht gesetzt")
+        return []
     try:
-        resp = requests.get(url, headers=headers, timeout=30)
+        share_id = _encode_share_url(ONEDRIVE_SHARE_URL)
+        url = f"https://graph.microsoft.com/v1.0/shares/{share_id}/driveItem/children"
+        resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         items = resp.json().get("value", [])
-        # Nur MP4-Dateien zurückgeben
         return [
             item for item in items
-            if item.get("file") and item.get("name", "").lower().endswith(".mp4")
+            if Path(item.get("name", "")).suffix.lower() in VIDEO_EXTENSIONS
         ]
-    except requests.RequestException as e:
-        logger.error(f"OneDrive-Fehler beim Auflisten: {e}")
+    except Exception as e:
+        logger.error(f"OneDrive Fehler beim Auflisten: {e}")
         return []
 
 
-def download_file(item: dict, dest_path: Path) -> bool:
-    """Einzelne Datei vom OneDrive herunterladen."""
-    download_url = item.get("@microsoft.graph.downloadUrl") or item.get("downloadUrl")
-    if not download_url:
-        logger.warning(f"Kein Download-URL für {item.get('name')}")
-        return False
-
+def download_file(item: dict) -> Path | None:
+    url  = item.get("@microsoft.graph.downloadUrl")
+    name = item.get("name", "video.mp4")
+    if not url:
+        return None
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    dest = DOWNLOAD_DIR / name
     try:
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Lade herunter: {item['name']} ({item.get('size', 0) // 1024 // 1024} MB)")
-        with requests.get(download_url, stream=True, timeout=300) as r:
-            r.raise_for_status()
-            with open(dest_path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        logger.info(f"✅ Heruntergeladen: {dest_path.name}")
-        return True
+        logger.info(f"Lade herunter: {name}")
+        resp = requests.get(url, stream=True, timeout=300)
+        resp.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                f.write(chunk)
+        size_mb = dest.stat().st_size / 1024 / 1024
+        logger.info(f"Heruntergeladen: {name} ({size_mb:.1f} MB)")
+        return dest
     except Exception as e:
-        logger.error(f"Download-Fehler für {item.get('name')}: {e}")
-        if dest_path.exists():
-            dest_path.unlink()
-        return False
-
-
-# ── Haupt-Sync ────────────────────────────────────────────────────────────────
-
-def sync_onedrive() -> dict:
-    """
-    Prüft OneDrive-Ordner auf neue Videos und lädt sie nach output/ herunter.
-    Gibt Zusammenfassung zurück: {downloaded, skipped, errors}
-    """
-    if not ONEDRIVE_SHARE_URL:
-        logger.warning("ONEDRIVE_SHARE_URL nicht gesetzt — OneDrive-Sync übersprungen")
-        return {"downloaded": 0, "skipped": 0, "errors": 0}
-
-    processed = load_processed()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    files  = list_files_in_share(ONEDRIVE_SHARE_URL)
-    result = {"downloaded": 0, "skipped": 0, "errors": 0}
-
-    if not files:
-        logger.info("OneDrive: Keine MP4-Dateien gefunden.")
-        return result
-
-    logger.info(f"OneDrive: {len(files)} MP4(s) gefunden")
-
-    for item in files:
-        name    = item.get("name", "")
-        item_id = item.get("id", name)  # ID als eindeutiger Schlüssel
-
-        if item_id in processed:
-            result["skipped"] += 1
-            continue
-
-        dest = OUTPUT_DIR / name
+        logger.error(f"Download-Fehler {name}: {e}")
         if dest.exists():
-            # Bereits vorhanden aber noch nicht als verarbeitet markiert
-            processed.add(item_id)
-            result["skipped"] += 1
+            dest.unlink()
+        return None
+
+
+def sync_onedrive() -> list:
+    """Laedt neue Videos herunter. Gibt Liste der heruntergeladenen Pfade zurueck."""
+    if not ONEDRIVE_SHARE_URL:
+        return []
+    processed = _load_processed()
+    files = list_onedrive_files()
+    new_paths = []
+    for item in files:
+        file_id = item.get("id", item.get("name"))
+        if file_id in processed:
             continue
-
-        ok = download_file(item, dest)
-        if ok:
-            processed.add(item_id)
-            result["downloaded"] += 1
-        else:
-            result["errors"] += 1
-
-    save_processed(processed)
-    logger.info(
-        f"OneDrive-Sync: {result['downloaded']} neu, "
-        f"{result['skipped']} übersprungen, {result['errors']} Fehler"
-    )
-    return result
-
-
-def mark_as_uploaded(filename: str):
-    """
-    Nach erfolgreichem Meta-Upload: Datei als verarbeitet markieren.
-    (Für späteres Verschieben in OneDrive/hochgeladen wenn OAuth aktiv ist)
-    """
-    # Bereits beim Download in processed gespeichert.
-    # Hier Platzhalter für spätere OAuth-Funktion: Datei in hochgeladen/ verschieben.
-    logger.info(f"[OneDrive] {filename} als hochgeladen markiert")
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    result = sync_onedrive()
-    print(f"Sync abgeschlossen: {result}")
+        path = download_file(item)
+        if path:
+            new_paths.append(path)
+            processed.add(file_id)
+    if new_paths:
+        _save_processed(processed)
+        logger.info(f"OneDrive Sync: {len(new_paths)} neue Video(s) heruntergeladen")
+    return new_paths
