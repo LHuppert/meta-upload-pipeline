@@ -164,7 +164,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🍷 *Meta Upload Bot — Weingut Huppert*\n\n"
         "*Upload-Workflow:*\n"
-        "/prüfen — Videos freigeben\n"
+        "/prufen — Videos freigeben\n"
         "/hochladen — Freigegebene Videos hochladen\n"
         "/queue — Warteschlange\n\n"
         "*Info & Reports:*\n"
@@ -681,7 +681,6 @@ def main():
     app.add_handler(CommandHandler("einstellungen",cmd_einstellungen))
     app.add_handler(CommandHandler("set",          cmd_set))
     app.add_handler(CommandHandler("dashboard",    cmd_dashboard))
-    app.add_handler(CommandHandler("prüfen",       cmd_pruefen))
     app.add_handler(CommandHandler("prufen",       cmd_pruefen))
     app.add_handler(CommandHandler("hochladen",    cmd_hochladen))
     app.add_handler(CommandHandler("queue",        cmd_queue))
