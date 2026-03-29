@@ -391,7 +391,20 @@ def upload_single_video(video_path: Path) -> dict:
     Lädt ein Video hoch und gibt Ergebnis zurück.
     Kümmert sich um Retry, Logging, Verschieben der Datei.
     """
-    result = {"path": str(video_path), "video_id": None, "status": "error", "error": ""}
+    result = {"path": str(video_path), "video_id": None, "status": "error", "error": "",
+              "ad_texts": {}}
+
+    # Ad-Texte vor dem Upload generieren
+    try:
+        from text_generator import generate_and_save, load_texts_for_video
+        existing = load_texts_for_video(video_path)
+        if existing:
+            result["ad_texts"] = existing
+            logger.info(f"📝 Vorhandene Ad-Texte geladen für {video_path.name}")
+        else:
+            result["ad_texts"] = generate_and_save(video_path)
+    except Exception as e:
+        logger.warning(f"Textgenerierung fehlgeschlagen (Upload läuft trotzdem): {e}")
 
     try:
         video_id = upload_video(video_path)
@@ -401,6 +414,11 @@ def upload_single_video(video_path: Path) -> dict:
         UPLOADED_DIR.mkdir(exist_ok=True)
         dest = UPLOADED_DIR / video_path.name
         video_path.rename(dest)
+
+        # Texts-Datei auch verschieben falls vorhanden
+        texts_file = video_path.with_suffix(".texts.json")
+        if texts_file.exists():
+            texts_file.rename(UPLOADED_DIR / texts_file.name)
 
         record_upload(video_path.name, video_id, "success")
         result["video_id"] = video_id
