@@ -22,13 +22,9 @@ services:
       - key: DASHBOARD_PASSWORD
         sync: false
       - key: DATA_DIR
-        value: /data
+        value: /tmp
       - key: PYTHON_VERSION
         value: "3.11.0"
-    disk:
-      name: pipeline-data
-      mountPath: /data
-      sizeGB: 1
 
   # ── Background Worker: Telegram Bot ───────────────────────────────────────
   - type: worker
@@ -51,10 +47,6 @@ services:
       - key: DASHBOARD_URL
         sync: false
       - key: DATA_DIR
-        value: /data
+        value: /tmp
       - key: PYTHON_VERSION
         value: "3.11.0"
-    disk:
-      name: pipeline-data
-      mountPath: /data
-      sizeGB: 1
