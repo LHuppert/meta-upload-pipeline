@@ -36,6 +36,8 @@ from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
+    MessageHandler,
+    filters,
     ContextTypes,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -545,6 +547,51 @@ async def check_all_decided(context, pending: dict):
     )
 
 
+# ─── Video-Empfang per Telegram ───────────────────────────────────────────────
+
+async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Videos die direkt per Telegram gesendet werden in output/ speichern."""
+    msg = update.message
+    if not msg:
+        return
+
+    # Sicherheit: nur vom autorisierten Chat
+    if msg.chat_id != CHAT_ID:
+        await msg.reply_text("❌ Nicht autorisiert.")
+        return
+
+    # Video oder Dokument (als Datei gesendet)
+    file_obj = None
+    filename = None
+    if msg.video:
+        file_obj = msg.video
+        filename = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+    elif msg.document and msg.document.mime_type and "video" in msg.document.mime_type:
+        file_obj = msg.document
+        original = msg.document.file_name or "video.mp4"
+        ext = Path(original).suffix or ".mp4"
+        filename = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+    else:
+        return
+
+    await msg.reply_text(f"📥 Video empfangen — wird heruntergeladen...")
+
+    try:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        dest = OUTPUT_DIR / filename
+        tg_file = await context.bot.get_file(file_obj.file_id)
+        await tg_file.download_to_drive(str(dest))
+        await msg.reply_text(
+            f"✅ *{filename}* gespeichert!\n\n"
+            f"Nutze /prüfen um das Video freizugeben und hochzuladen.",
+            parse_mode="Markdown"
+        )
+        logger.info(f"Video empfangen und gespeichert: {filename}")
+    except Exception as e:
+        await msg.reply_text(f"❌ Fehler beim Speichern: {e}")
+        logger.error(f"Video-Download Fehler: {e}")
+
+
 # ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 async def send_daily_report(context):
@@ -639,6 +686,7 @@ def main():
     app.add_handler(CommandHandler("hochladen",    cmd_hochladen))
     app.add_handler(CommandHandler("queue",        cmd_queue))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video_upload))
 
     # APScheduler für automatische Reports
     scheduler = AsyncIOScheduler()
