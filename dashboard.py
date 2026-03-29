@@ -486,6 +486,7 @@ def einstellungen():
     s = settings.get_all()
     sf = s.get("safety", {})
     sc = s.get("schedule", {})
+    sg = s.get("geo_exclusion", {})
 
     def checked(val):
         return "checked" if val else ""
@@ -567,7 +568,7 @@ def einstellungen():
 
         <div class="section-title">📍 Geo-Ausschluss (kein Targeting im Heimatort)</div>
         <div class="toggle">
-          <input type="checkbox" name="geo_exclusion_enabled" id="geo_exclusion_enabled" {checked(s.get('geo_exclusion', {{}}).get('enabled', False))}>
+          <input type="checkbox" name="geo_exclusion_enabled" id="geo_exclusion_enabled" {checked(sg.get('enabled', False))}>
           <label for="geo_exclusion_enabled">Bestimmten Umkreis von Werbung ausschließen</label>
         </div>
         <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:12px;margin:8px 0;font-size:.85em;color:#555">
@@ -577,27 +578,27 @@ def einstellungen():
         <div class="grid">
           <div class="field">
             <label>Ortsname</label>
-            <input type="text" name="geo_location_name" value="{s.get('geo_exclusion', {{}}).get('location_name', 'Gundersheim')}" placeholder="Gundersheim">
+            <input type="text" name="geo_location_name" value="{sg.get('location_name', 'Gundersheim')}" placeholder="Gundersheim">
           </div>
           <div class="field">
             <label>PLZ</label>
-            <input type="text" name="geo_zip_code" value="{s.get('geo_exclusion', {{}}).get('zip_code', '67598')}" placeholder="67598">
+            <input type="text" name="geo_zip_code" value="{sg.get('zip_code', '67598')}" placeholder="67598">
           </div>
           <div class="field">
             <label>Land (ISO-Code)</label>
-            <input type="text" name="geo_country" value="{s.get('geo_exclusion', {{}}).get('country', 'DE')}" placeholder="DE" style="max-width:80px">
+            <input type="text" name="geo_country" value="{sg.get('country', 'DE')}" placeholder="DE" style="max-width:80px">
           </div>
           <div class="field">
             <label>Radius (km, 1–80)</label>
-            <input type="number" name="geo_radius_km" value="{s.get('geo_exclusion', {{}}).get('radius_km', 25)}" min="1" max="80">
+            <input type="number" name="geo_radius_km" value="{sg.get('radius_km', 25)}" min="1" max="80">
           </div>
           <div class="field">
             <label>Breitengrad (Latitude)</label>
-            <input type="text" name="geo_latitude" value="{s.get('geo_exclusion', {{}}).get('latitude', 49.7153)}" placeholder="49.7153">
+            <input type="text" name="geo_latitude" value="{sg.get('latitude', 49.7153)}" placeholder="49.7153">
           </div>
           <div class="field">
             <label>Längengrad (Longitude)</label>
-            <input type="text" name="geo_longitude" value="{s.get('geo_exclusion', {{}}).get('longitude', 8.2175)}" placeholder="8.2175">
+            <input type="text" name="geo_longitude" value="{sg.get('longitude', 8.2175)}" placeholder="8.2175">
           </div>
         </div>
 
