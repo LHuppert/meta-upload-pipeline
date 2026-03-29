@@ -113,7 +113,7 @@ def _list_via_personal_api(resolved_url: str) -> list | None:
     cid     = params.get("cid",     [None])[0]
 
     if not all([authkey, resid, cid]):
-        logger.debug(f"Personal API: fehlende Parameter in URL ({resolved_url[:80]})")
+        logger.info(f"Personal API: fehlende Parameter — authkey={authkey}, cid={cid}, resid={resid}")
         return None
 
     # Versuche mehrere Endpunkte
@@ -184,7 +184,7 @@ def list_onedrive_files(share_url: str = None) -> list:
 
     for url in urls:
         resolved = _resolve_url(url)
-        logger.debug(f"Resolved: {resolved[:100]}")
+        logger.info(f"Resolved URL: {resolved[:200]}")
 
         # 1. Graph API mit Original-URL
         items = _list_via_graph(url)
