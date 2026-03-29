@@ -1,0 +1,29 @@
+# Secrets — NIEMALS ins Git!
+.env
+*.env
+
+# Logs & Runtime-Daten
+logs/
+*.log
+
+# Upload-Ordner
+output/
+approved/
+uploaded/
+failed/
+skipped/
+
+# Settings (enthält Passwort-Hash)
+settings.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db

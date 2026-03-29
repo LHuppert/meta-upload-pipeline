@@ -1,0 +1,60 @@
+services:
+  # ── Web Service: Flask Dashboard ──────────────────────────────────────────
+  - type: web
+    name: meta-upload-dashboard
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn dashboard:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
+    plan: free
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_AD_ACCOUNT_ID
+        sync: false
+      - key: META_PAGE_ID
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: DATA_DIR
+        value: /data
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+    disk:
+      name: pipeline-data
+      mountPath: /data
+      sizeGB: 1
+
+  # ── Background Worker: Telegram Bot ───────────────────────────────────────
+  - type: worker
+    name: meta-upload-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python upload_bot.py
+    plan: free
+    envVars:
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_AD_ACCOUNT_ID
+        sync: false
+      - key: META_PAGE_ID
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: DATA_DIR
+        value: /data
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+    disk:
+      name: pipeline-data
+      mountPath: /data
+      sizeGB: 1

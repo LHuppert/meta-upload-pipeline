@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python setup.py)",
+      "Bash(PYTHONUTF8=1 python setup.py)",
+      "Bash(python -c \"from settings_manager import settings; from safety_monitor import get_summary; from dashboard import app; print\\(''✅ Alle Module importierbar''\\); print\\(''Settings:'', settings.get\\(''safety.max_uploads_per_day''\\)\\); print\\(''Health:'', get_summary\\(\\)[:50]\\)\")",
+      "Bash(python -c \"from settings_manager import settings; from safety_monitor import get_summary; from dashboard import app; print\\(''OK - Alle Module importierbar''\\); print\\(''max_uploads:'', settings.get\\(''safety.max_uploads_per_day''\\)\\)\")",
+      "Bash(PYTHONUTF8=1 python -c \":*)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}
