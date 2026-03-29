@@ -2,7 +2,10 @@
 onedrive_sync.py - Laedt Videos aus geteilten OneDrive-Ordnern herunter.
 
 Unterstuetzt mehrere Share-URLs (kommagetrennt in ONEDRIVE_SHARE_URL).
-Methoden: Graph API (anonym) -> HTML-Scraping als Fallback.
+Methoden:
+  1. Graph API (anonym, fuer Business-OneDrive)
+  2. OneDrive Personal API via authkey (fuer private/consumer OneDrive)
+  3. HTML-Scraping als letzter Fallback
 """
 
 import os
@@ -12,18 +15,18 @@ import base64
 import logging
 import requests
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Kommagetrennte Liste von Share-URLs unterstuetzt
-_RAW_URLS        = os.getenv("ONEDRIVE_SHARE_URL", "")
-ONEDRIVE_URLS    = [u.strip() for u in _RAW_URLS.split(",") if u.strip()]
+_RAW_URLS     = os.getenv("ONEDRIVE_SHARE_URL", "")
+ONEDRIVE_URLS = [u.strip() for u in _RAW_URLS.split(",") if u.strip()]
 
-DATA_DIR         = Path(os.getenv("DATA_DIR", "/tmp"))
-PROCESSED        = DATA_DIR / "onedrive_processed.json"
-DOWNLOAD_DIR     = DATA_DIR / "downloads"
+DATA_DIR      = Path(os.getenv("DATA_DIR", "/tmp"))
+PROCESSED     = DATA_DIR / "onedrive_processed.json"
+DOWNLOAD_DIR  = DATA_DIR / "downloads"
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 
@@ -36,7 +39,7 @@ _HEADERS = {
 }
 
 
-# ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _encode_share_url(url: str) -> str:
     encoded = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
@@ -44,12 +47,17 @@ def _encode_share_url(url: str) -> str:
 
 
 def _resolve_url(url: str) -> str:
-    """Loest 1drv.ms Kurzlink zur echten OneDrive-URL auf."""
+    """Loest 1drv.ms Kurzlink via GET auf (HEAD folgt Redirects nicht immer korrekt)."""
     try:
-        r = requests.head(url, headers=_HEADERS, allow_redirects=True, timeout=15)
+        r = requests.get(
+            url, headers=_HEADERS,
+            allow_redirects=True, timeout=15,
+            stream=True  # kein Body herunterladen
+        )
+        r.close()
         resolved = r.url
         if resolved != url:
-            logger.debug(f"URL aufgeloest: {url[:60]}... -> {resolved[:80]}...")
+            logger.debug(f"Redirect: {url[:50]} -> {resolved[:80]}")
         return resolved
     except Exception:
         return url
@@ -69,23 +77,19 @@ def _save_processed(ids: set):
     PROCESSED.write_text(json.dumps(list(ids), indent=2), encoding="utf-8")
 
 
-# ── Datei-Listing ─────────────────────────────────────────────────────────────
+# ── Methode 1: Microsoft Graph API ───────────────────────────────────────────
 
 def _list_via_graph(url: str) -> list | None:
-    """
-    Versucht Dateien ueber Microsoft Graph API abzurufen.
-    Gibt None zurueck wenn 401/403 (Auth erforderlich).
-    """
+    """Versucht Dateiliste via Graph API (funktioniert bei Business-OneDrive)."""
     share_id = _encode_share_url(url)
     api_url  = f"https://graph.microsoft.com/v1.0/shares/{share_id}/driveItem/children"
     try:
         r = requests.get(api_url, headers=_HEADERS, timeout=30)
         if r.status_code in (401, 403):
-            logger.debug(f"Graph API: {r.status_code} fuer {url[:60]}")
             return None
         r.raise_for_status()
         items = r.json().get("value", [])
-        logger.info(f"Graph API: {len(items)} Eintraege gefunden")
+        logger.info(f"Graph API: {len(items)} Eintraege")
         return items
     except requests.HTTPError:
         return None
@@ -94,107 +98,115 @@ def _list_via_graph(url: str) -> list | None:
         return None
 
 
-def _extract_download_url(item: dict) -> str | None:
-    """Extrahiert Download-URL aus einem Graph-API oder HTML-Item."""
-    return (
-        item.get("@microsoft.graph.downloadUrl")
-        or item.get("@content.downloadUrl")
-        or item.get("downloadUrl")
-    )
+# ── Methode 2: OneDrive Personal API mit authkey ──────────────────────────────
 
+def _list_via_personal_api(resolved_url: str) -> list | None:
+    """
+    Nutzt die OneDrive Personal (consumer) API.
+    Funktioniert wenn resolved_url onedrive.live.com mit authkey+resid+cid enthaelt.
+    """
+    parsed  = urlparse(resolved_url)
+    params  = parse_qs(parsed.query)
+
+    authkey = params.get("authkey", [None])[0]
+    resid   = params.get("resid",   [None])[0]
+    cid     = params.get("cid",     [None])[0]
+
+    if not all([authkey, resid, cid]):
+        logger.debug(f"Personal API: fehlende Parameter in URL ({resolved_url[:80]})")
+        return None
+
+    # Versuche mehrere Endpunkte
+    endpoints = [
+        f"https://api.onedrive.com/v1.0/drives/{cid}/items/{resid}/children",
+        f"https://onedrive.live.com/children?authkey={authkey}&cid={cid}&id={resid}&resid={resid}",
+    ]
+    for endpoint in endpoints:
+        try:
+            api_params = {"authkey": authkey} if "api.onedrive.com" in endpoint else {}
+            r = requests.get(endpoint, params=api_params, headers=_HEADERS, timeout=30)
+            if r.status_code == 200:
+                data  = r.json()
+                items = data.get("value", data.get("data", []))
+                if isinstance(items, list):
+                    logger.info(f"Personal API ({endpoint[:40]}): {len(items)} Eintraege")
+                    return items
+        except Exception as e:
+            logger.debug(f"Personal API Versuch fehlgeschlagen: {e}")
+            continue
+
+    return None
+
+
+# ── Methode 3: Graph API mit aufgeloester URL ─────────────────────────────────
+
+def _list_via_graph_resolved(resolved_url: str) -> list | None:
+    """Versucht Graph API mit der aufgeloesten onedrive.live.com URL."""
+    if "onedrive.live.com" not in resolved_url and "1drv.ms" in resolved_url:
+        return None
+    return _list_via_graph(resolved_url)
+
+
+# ── Methode 4: HTML-Scraping (Fallback) ───────────────────────────────────────
 
 def _list_via_html(url: str) -> list:
-    """
-    Fallback: Parst die OneDrive-Share-Seite auf eingebettete JSON-Dateidaten.
-    Funktioniert fuer 'Jeder mit dem Link' Shares.
-    """
+    """Sucht direkte Video-Download-Links im HTML (Fallback, selten erfolgreich)."""
     try:
         r = requests.get(url, headers=_HEADERS, allow_redirects=True, timeout=30)
-        text = r.text
-
-        items = []
-
-        # Methode A: Suche nach "FileLeafRef" / "ServerRelativeUrl" (SharePoint-style)
-        # Methode B: Suche nach dem eingebetteten JSON-Blob mit "items"
-        # Methode C: Suche nach directUrl / downloadUrl Feldern
-
-        # Versuche JSON-Blob zu finden (OneDrive Personal bettet Daten als JS-Variable ein)
-        patterns = [
-            r'"items"\s*:\s*(\[(?:[^[\]]*|\[(?:[^[\]]*|\[[^\[\]]*\])*\])*\])',
-            r'\"files\"\s*:\s*(\[.*?\])',
-        ]
-        for pat in patterns:
-            m = re.search(pat, text, re.DOTALL)
-            if m:
-                try:
-                    raw = json.loads(m.group(1))
-                    for f in raw:
-                        name = f.get("name") or f.get("fileName") or ""
-                        dl   = (f.get("@microsoft.graph.downloadUrl")
-                                or f.get("downloadUrl")
-                                or f.get("url") or "")
-                        if name and dl and Path(name).suffix.lower() in VIDEO_EXTENSIONS:
-                            items.append({
-                                "name": name,
-                                "id":   f.get("id", name),
-                                "@microsoft.graph.downloadUrl": dl,
-                            })
-                    if items:
-                        logger.info(f"HTML-Scraping: {len(items)} Videos gefunden")
-                        return items
-                except json.JSONDecodeError:
-                    continue
-
-        # Methode D: direkte Download-Links im HTML suchen
         dl_links = re.findall(
-            r'"(https://[^"]*\.(?:mp4|mov|avi|mkv)[^"]*)"',
-            text, re.IGNORECASE
+            r'"(https://[^"]*\.(?:mp4|mov|avi|mkv|webm)[^"]*)"',
+            r.text, re.IGNORECASE
         )
+        items = []
         for link in dl_links:
             name = Path(link.split("?")[0]).name or "video.mp4"
-            items.append({
-                "name": name,
-                "id":   name,
-                "@microsoft.graph.downloadUrl": link,
-            })
+            items.append({"name": name, "id": name,
+                          "@microsoft.graph.downloadUrl": link})
         if items:
-            logger.info(f"HTML-Scraping (direct links): {len(items)} Videos")
+            logger.info(f"HTML-Scraping: {len(items)} Videos")
         else:
-            logger.warning(f"HTML-Scraping: keine Videos auf Seite gefunden. Status: {r.status_code}")
+            logger.warning(f"HTML-Scraping: keine Videos (Status {r.status_code})")
         return items
-
     except Exception as e:
         logger.error(f"HTML-Scraping Fehler: {e}")
         return []
 
 
+# ── Hauptfunktion: Dateiliste ─────────────────────────────────────────────────
+
 def list_onedrive_files(share_url: str = None) -> list:
     """
     Listet Videos in einem OneDrive-Share.
-    Versucht zuerst Graph API, dann HTML-Scraping.
+    Probiert alle Methoden der Reihe nach.
     """
-    urls = [share_url] if share_url else ONEDRIVE_URLS
+    urls      = [share_url] if share_url else ONEDRIVE_URLS
     all_items = []
 
     for url in urls:
-        # 1. Kurzlink aufloesen
         resolved = _resolve_url(url)
+        logger.debug(f"Resolved: {resolved[:100]}")
 
-        # 2. Graph API versuchen (mit Original- UND aufgeloester URL)
+        # 1. Graph API mit Original-URL
         items = _list_via_graph(url)
-        if items is None and resolved != url:
-            items = _list_via_graph(resolved)
 
-        # 3. Fallback: HTML-Scraping
+        # 2. Graph API mit aufgeloester URL
+        if items is None and resolved != url:
+            items = _list_via_graph_resolved(resolved)
+
+        # 3. OneDrive Personal API (authkey aus URL)
         if items is None:
-            logger.info(f"Graph API nicht verfuegbar, versuche HTML-Scraping...")
+            items = _list_via_personal_api(resolved)
+
+        # 4. HTML-Scraping
+        if items is None:
+            logger.info("Alle API-Methoden fehlgeschlagen, versuche HTML-Scraping...")
             items = _list_via_html(resolved)
 
         videos = [
             i for i in (items or [])
             if Path(i.get("name", "")).suffix.lower() in VIDEO_EXTENSIONS
         ]
-        logger.info(f"Share {url[:50]}: {len(videos)} Video(s) gefunden")
+        logger.info(f"Share {url[:50]}: {len(videos)} Video(s)")
         all_items.extend(videos)
 
     return all_items
@@ -202,8 +214,16 @@ def list_onedrive_files(share_url: str = None) -> list:
 
 # ── Download ──────────────────────────────────────────────────────────────────
 
+def _get_download_url(item: dict) -> str | None:
+    return (
+        item.get("@microsoft.graph.downloadUrl")
+        or item.get("@content.downloadUrl")
+        or item.get("downloadUrl")
+    )
+
+
 def download_file(item: dict) -> Path | None:
-    url  = _extract_download_url(item)
+    url  = _get_download_url(item)
     name = item.get("name", "video.mp4")
     if not url:
         logger.warning(f"Kein Download-URL fuer {name}")
@@ -230,7 +250,7 @@ def download_file(item: dict) -> Path | None:
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
 def sync_onedrive() -> list:
-    """Laedt neue Videos herunter. Gibt Liste der heruntergeladenen Pfade zurueck."""
+    """Laedt neue Videos herunter. Gibt Liste der Pfade zurueck."""
     if not ONEDRIVE_URLS:
         logger.warning("ONEDRIVE_SHARE_URL nicht gesetzt")
         return []
@@ -247,5 +267,7 @@ def sync_onedrive() -> list:
             processed.add(file_id)
     if new_paths:
         _save_processed(processed)
-        logger.info(f"OneDrive Sync: {len(new_paths)} neue Video(s) heruntergeladen")
+        logger.info(f"OneDrive Sync: {len(new_paths)} neue Video(s)")
+    else:
+        logger.info("OneDrive Sync: keine neuen Videos")
     return new_paths
