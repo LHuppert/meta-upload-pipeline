@@ -24,13 +24,18 @@ def run_dashboard():
 
 
 def run_bot():
-    """Telegram Bot in eigenem Thread."""
+    """Telegram Bot in eigenem Thread — eigener asyncio Event Loop."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
         from upload_bot import main
         logger.info("Telegram Bot startet...")
         main()
     except Exception as e:
         logger.error(f"Bot Fehler: {e}")
+    finally:
+        loop.close()
 
 
 if __name__ == "__main__":
