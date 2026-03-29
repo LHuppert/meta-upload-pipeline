@@ -683,6 +683,19 @@ async def _run_weekly_review_job() -> None:
         logger.error(f"Weekly Review Fehler: {e}")
 
 
+async def _error_handler(update, context) -> None:
+    """Sendet ungefangene Bot-Fehler per Telegram."""
+    logger.error(f"Bot-Fehler: {context.error}", exc_info=context.error)
+    try:
+        await context.bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🚨 *Bot-Fehler*\n\n`{context.error}`",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
 # ─── OneDrive Auto-Upload ─────────────────────────────────────────────────────
 
 async def run_onedrive_sync(app_or_context, force_filename: str = None):
@@ -707,6 +720,14 @@ async def run_onedrive_sync(app_or_context, force_filename: str = None):
             new_videos = sync_onedrive()
     except Exception as e:
         logger.error(f"OneDrive Sync Fehler: {e}")
+        try:
+            await bot.send_message(
+                chat_id=CHAT_ID,
+                text=f"⚠️ *OneDrive Sync Fehler*\n\n`{e}`",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
         return
 
     if not new_videos:
@@ -881,6 +902,7 @@ def main():
     app.add_handler(CommandHandler("testupload",   cmd_testupload))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video_upload))
+    app.add_error_handler(_error_handler)
 
     logger.info("🤖 Telegram Upload-Bot gestartet")
     logger.info("☁️ OneDrive Sync: alle 15 Minuten")
