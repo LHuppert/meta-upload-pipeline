@@ -683,7 +683,7 @@ def einstellungen():
             </select>
           </div>
           <div class="field">
-            <label>Ø Bestellwert (AOV in €)</label>
+            <label>Ø Bestellwert (AOV in EUR)</label>
             <input type="number" name="average_order_value" value="{scampaigns.get('average_order_value', 80)}" min="1" max="9999">
           </div>
         </div>
@@ -700,19 +700,19 @@ def einstellungen():
               <input type="text" name="meta_campaign_id_{c['id']}" value="{c.get('meta_campaign_id', '')}" placeholder="123456789">
             </div>
             <div class="field">
-              <label>Tagesbudget gesamt (€)</label>
+              <label>Tagesbudget gesamt (EUR)</label>
               <input type="text" name="daily_budget_{c['id']}" value="{c.get('daily_budget', '10')}" placeholder="10">
             </div>
             <div class="field">
-              <label>Budget pro Ad / Tag (€)</label>
+              <label>Budget pro Ad / Tag (EUR)</label>
               <input type="number" name="budget_per_ad_{c['id']}" value="{c.get('budget_per_ad_eur', 5.0)}" min="1" max="500" step="0.5">
             </div>
             <div class="field">
-              <label>Warmup-Budget neue Ads (€)</label>
+              <label>Warmup-Budget neue Ads (EUR)</label>
               <input type="number" name="warmup_budget_{c['id']}" value="{c.get('warmup_budget_eur', 3.0)}" min="1" max="100" step="0.5">
             </div>
             <div class="field">
-              <label>Spend-Cap / Tag (€)</label>
+              <label>Spend-Cap / Tag (EUR)</label>
               <input type="number" name="spend_cap_{c['id']}" value="{c.get('spend_cap_eur', 100.0)}" min="1" max="10000">
             </div>
             <div class="field">
@@ -803,7 +803,7 @@ def einstellungen():
             <input type="text" name="hook_rate_min" value="{skp.get('hook_rate_min', 0.25)}"></div>
           <div class="field"><label>CTR Mindestwert (z.B. 0.01 = 1%)</label>
             <input type="text" name="ctr_min" value="{skp.get('ctr_min', 0.01)}"></div>
-          <div class="field"><label>CPM Malus-Schwelle (€)</label>
+          <div class="field"><label>CPM Malus-Schwelle (EUR)</label>
             <input type="number" name="cpm_malus_threshold" value="{skp.get('cpm_malus_threshold', 18.0)}" min="1" max="100"></div>
         </div>
       </div>
@@ -811,15 +811,15 @@ def einstellungen():
       <div class="card">
         <div class="section-title">💰 Budget & Skalierung (globale Defaults)</div>
         <div class="grid">
-          <div class="field"><label>Budget pro Ad nach Warmup (€)</label>
+          <div class="field"><label>Budget pro Ad nach Warmup (EUR)</label>
             <input type="number" name="budget_per_ad_eur" value="{sbg.get('budget_per_ad_eur', 5.0)}" min="1" max="100" step="0.5"></div>
-          <div class="field"><label>Warmup-Budget neue Ads (€)</label>
+          <div class="field"><label>Warmup-Budget neue Ads (EUR)</label>
             <input type="number" name="warmup_budget_eur" value="{sbg.get('warmup_budget_eur', 3.0)}" min="1" max="50" step="0.5"></div>
           <div class="field"><label>Warmup-Dauer (Stunden)</label>
             <input type="number" name="warmup_hours" value="{sbg.get('warmup_hours', 48)}" min="1" max="168"></div>
-          <div class="field"><label>Scale-Budget Top-Ads (€)</label>
+          <div class="field"><label>Scale-Budget Top-Ads (EUR)</label>
             <input type="number" name="scale_budget_eur" value="{sbg.get('scale_budget_eur', 10.0)}" min="1" max="500" step="0.5"></div>
-          <div class="field"><label>Tägliches Spend-Cap gesamt (€)</label>
+          <div class="field"><label>Tägliches Spend-Cap gesamt (EUR)</label>
             <input type="number" name="daily_spend_cap_eur" value="{sbg.get('daily_spend_cap_eur', 100.0)}" min="1" max="10000"></div>
           <div class="field"><label>Max. Budget-Erhöhung Faktor (z.B. 2.0 = 2×)</label>
             <input type="number" name="max_scale_multiplier" value="{sbg.get('max_scale_multiplier', 2.0)}" min="1" max="10" step="0.1"></div>
