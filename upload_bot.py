@@ -1035,6 +1035,22 @@ async def cmd_testupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Fehler: {e}")
 
 
+# ─── Nummer-Eingabe direkt ────────────────────────────────────────────────────
+
+async def handle_number_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Wenn der User einfach eine Zahl schreibt → Ad-Setup für dieses Video."""
+    if update.message.chat_id != CHAT_ID:
+        return
+    text = update.message.text.strip()
+    try:
+        nr = int(text)
+    except ValueError:
+        return  # Kein Zahl → ignorieren
+    # Direkt wie /texte [nr] behandeln
+    context.args = [str(nr)]
+    await cmd_texte(update, context)
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -1099,6 +1115,7 @@ def main():
     app.add_handler(CommandHandler("texte",        cmd_texte))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video_upload))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_number_input))
     app.add_error_handler(_error_handler)
 
     logger.info("🤖 Telegram Upload-Bot gestartet")
