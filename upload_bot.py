@@ -844,9 +844,9 @@ async def cmd_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ad-Texte für ein Google Drive Video generieren.
-    Ohne Argument: zeigt Video-Liste.
-    Mit Nummer: generiert Texte für Video #N.
+    """Ad-Texte für ein Video generieren.
+    /texte 42  → sucht Video das mit '42' beginnt (z.B. '42_Weinlese.mp4')
+    /texte     → zeigt kurze Anleitung
     """
     global _gdrive_cache
     if update.message.chat_id != CHAT_ID:
@@ -854,24 +854,57 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     args = context.args
 
-    # Kein Argument → Video-Liste anzeigen
     if not args:
-        await cmd_videos(update, context)
+        await update.message.reply_text(
+            "✍️ *Ad-Texte Generator*\n\n"
+            "Tippe `/texte [Nummer]` für ein Video.\n"
+            "Beispiel: `/texte 42`\n\n"
+            "Die Nummer entspricht dem Präfix im Dateinamen\n"
+            "(z.B. `42_Weinlese.mp4` → `/texte 42`)\n\n"
+            "Alle Videos anzeigen: /videos",
+            parse_mode="Markdown"
+        )
         return
 
-    # Nummer angegeben
     try:
         nr = int(args[0])
     except ValueError:
-        await update.message.reply_text("❌ Bitte eine Nummer angeben. Beispiel: `/texte 3`", parse_mode="Markdown")
+        await update.message.reply_text("❌ Bitte eine Zahl eingeben. Beispiel: `/texte 42`", parse_mode="Markdown")
         return
 
-    # Liste neu laden falls Cache leer
-    if not _gdrive_cache:
-        await update.message.reply_text("🔄 Lade Video-Liste...")
-        try:
-            from gdrive_sync import list_drive_files
-            import os as _os
+    await update.message.reply_text(f"🔍 Suche Video Nr. {nr} in Google Drive...", parse_mode="Markdown")
+
+    # Google Drive durchsuchen nach Datei die mit der Nummer beginnt
+    try:
+        from gdrive_sync import list_drive_files
+        import os as _os
+
+        # Cache nutzen oder neu laden
+        if not _gdrive_cache:
+            folder_ids = _os.getenv("GOOGLE_DRIVE_FOLDER_IDS", "").split(",")
+            all_files = []
+            for fid in folder_ids:
+                fid = fid.strip()
+                if fid:
+                    all_files.extend(list_drive_files(fid))
+            _gdrive_cache = [f for f in all_files if "video" in f.get("mimeType", "").lower()
+                             or f.get("name", "").lower().endswith((".mp4", ".mov", ".avi", ".mov"))]
+
+        # Datei suchen die mit der Nummer beginnt (z.B. "42_", "42 ", "042_")
+        video = None
+        for f in _gdrive_cache:
+            name = f.get("name", "")
+            prefix = name.split("_")[0].split(" ")[0].split("-")[0].strip()
+            try:
+                if int(prefix) == nr:
+                    video = f
+                    break
+            except ValueError:
+                continue
+
+        if not video:
+            # Cache leeren und nochmal versuchen
+            _gdrive_cache = []
             folder_ids = _os.getenv("GOOGLE_DRIVE_FOLDER_IDS", "").split(",")
             all_files = []
             for fid in folder_ids:
@@ -880,23 +913,34 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     all_files.extend(list_drive_files(fid))
             _gdrive_cache = [f for f in all_files if "video" in f.get("mimeType", "").lower()
                              or f.get("name", "").lower().endswith((".mp4", ".mov", ".avi"))]
-        except Exception as e:
-            await update.message.reply_text(f"❌ Fehler beim Laden der Liste: {e}")
+            for f in _gdrive_cache:
+                name = f.get("name", "")
+                prefix = name.split("_")[0].split(" ")[0].split("-")[0].strip()
+                try:
+                    if int(prefix) == nr:
+                        video = f
+                        break
+                except ValueError:
+                    continue
+
+        if not video:
+            await update.message.reply_text(
+                f"❌ Kein Video mit Nummer *{nr}* gefunden.\n\n"
+                f"Stelle sicher dass der Dateiname mit `{nr}_` oder `{nr} ` beginnt.\n"
+                f"Alle Videos anzeigen: /videos",
+                parse_mode="Markdown"
+            )
             return
 
-    if nr < 1 or nr > len(_gdrive_cache):
-        await update.message.reply_text(
-            f"❌ Ungültige Nummer. Bitte zwischen 1 und {len(_gdrive_cache)} wählen.\n"
-            f"Nutze /videos für die aktuelle Liste."
-        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Fehler beim Laden aus Google Drive: {e}")
         return
 
-    video = _gdrive_cache[nr - 1]
-    video_name = video.get("name", f"video_{nr}.mp4")
+    video_name = video.get("name", f"{nr}.mp4")
     size_mb = int(video.get("size", 0)) / 1024 / 1024
 
     await update.message.reply_text(
-        f"🤖 Generiere Ad-Texte für:\n`{video_name}`...",
+        f"🤖 Generiere Setup für:\n`{video_name}`...",
         parse_mode="Markdown"
     )
 
@@ -912,8 +956,8 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
         placements = ", ".join(s.get("placements", [])) or "—"
 
         msg = (
-            f"✍️ *Ads Manager Setup — Video {nr}*\n"
-            f"📁 `{video_name}`\n\n"
+            f"✍️ *Ads Manager Setup — Nr. {nr}*\n"
+            f"📁 `{video_name}` ({size_mb:.0f} MB)\n\n"
             f"━━━━ *AD TEXTE* ━━━━\n\n"
             f"*📢 Primary Text:*\n{s.get('primary_text', '—')}\n\n"
             f"*🏷️ Headline:*\n{s.get('headline', '—')}\n\n"
