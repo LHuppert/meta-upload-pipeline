@@ -787,6 +787,13 @@ async def run_onedrive_sync(app_or_context, force_filename: str = None):
 
         await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
 
+        # Lokale Datei nach Upload löschen — /tmp hat nur 2 GB Limit
+        try:
+            Path(r["path"]).unlink(missing_ok=True)
+            logger.info(f"Lokale Datei gelöscht: {filename}")
+        except Exception as e:
+            logger.warning(f"Konnte Datei nicht löschen: {filename}: {e}")
+
 
 async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manueller OneDrive Sync."""

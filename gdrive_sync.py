@@ -155,6 +155,8 @@ def download_drive_file(file_info: dict) -> Path | None:
 
 # ── Sync ──────────────────────────────────────────────────────────────────────
 
+MAX_DOWNLOADS_PER_SYNC = 5  # Max Videos pro Sync-Lauf (verhindert /tmp Overflow)
+
 def sync_gdrive() -> list:
     """Laedt neue Videos aus allen konfigurierten Google Drive Ordnern."""
     if not GOOGLE_API_KEY:
@@ -168,8 +170,13 @@ def sync_gdrive() -> list:
     new_paths = []
 
     for folder_id in FOLDER_IDS:
+        if len(new_paths) >= MAX_DOWNLOADS_PER_SYNC:
+            break
         files = list_drive_files(folder_id)
         for f in files:
+            if len(new_paths) >= MAX_DOWNLOADS_PER_SYNC:
+                logger.info(f"Max {MAX_DOWNLOADS_PER_SYNC} Downloads erreicht — Rest beim nächsten Sync")
+                break
             fid = f.get("id")
             if fid in processed:
                 continue
