@@ -69,31 +69,40 @@ def list_drive_files(folder_id: str) -> list:
         return []
 
     fid    = extract_folder_id(folder_id)
-    params = {
-        "q":       f"'{fid}' in parents and trashed=false",
-        "key":     GOOGLE_API_KEY,
-        "fields":  "files(id,name,mimeType,size)",
-        "pageSize": 100,
-    }
+    all_files = []
+    page_token = None
     try:
-        r = requests.get(
-            "https://www.googleapis.com/drive/v3/files",
-            params=params, headers=_HEADERS, timeout=30
-        )
-        if r.status_code == 403:
-            logger.error(f"Google Drive 403 — API Key ungueltig oder Drive API nicht aktiviert")
-            return []
-        if r.status_code == 404:
-            logger.error(f"Google Drive 404 — Ordner nicht gefunden: {fid}")
-            return []
-        r.raise_for_status()
-        files = r.json().get("files", [])
+        while True:
+            params = {
+                "q":       f"'{fid}' in parents and trashed=false",
+                "key":     GOOGLE_API_KEY,
+                "fields":  "nextPageToken,files(id,name,mimeType,size)",
+                "pageSize": 200,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            r = requests.get(
+                "https://www.googleapis.com/drive/v3/files",
+                params=params, headers=_HEADERS, timeout=30
+            )
+            if r.status_code == 403:
+                logger.error(f"Google Drive 403 — API Key ungueltig oder Drive API nicht aktiviert")
+                return []
+            if r.status_code == 404:
+                logger.error(f"Google Drive 404 — Ordner nicht gefunden: {fid}")
+                return []
+            r.raise_for_status()
+            data = r.json()
+            all_files.extend(data.get("files", []))
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
         videos = [
-            f for f in files
+            f for f in all_files
             if f.get("mimeType") in VIDEO_MIMETYPES
             or Path(f.get("name", "")).suffix.lower() in VIDEO_EXTENSIONS
         ]
-        logger.info(f"Google Drive Ordner {fid}: {len(videos)} Video(s) von {len(files)} Dateien")
+        logger.info(f"Google Drive Ordner {fid}: {len(videos)} Video(s) von {len(all_files)} Dateien")
         return videos
     except Exception as e:
         logger.error(f"Google Drive Fehler beim Auflisten ({fid}): {e}")
