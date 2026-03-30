@@ -125,6 +125,138 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklaerung):
         return {"error": str(e), **_default_texts()}
 
 
+def _get_video_duration(video_path: str) -> float:
+    """Gibt Video-Dauer in Sekunden zurück."""
+    import subprocess
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+            capture_output=True, text=True, timeout=30
+        )
+        return float(json.loads(probe.stdout).get("format", {}).get("duration", 30))
+    except Exception:
+        return 30.0
+
+
+def _extract_frames(video_path: str, num_frames: int = 10) -> list:
+    """Extrahiert gleichmäßig verteilte Frames als base64-JPEG-Liste."""
+    import subprocess, base64, tempfile
+    frames = []
+    try:
+        duration = _get_video_duration(video_path)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i in range(num_frames):
+                t = duration * (i + 1) / (num_frames + 1)
+                frame_path = f"{tmpdir}/frame_{i:02d}.jpg"
+                subprocess.run(
+                    ["ffmpeg", "-ss", str(t), "-i", video_path,
+                     "-vframes", "1", "-q:v", "3", "-vf", "scale=640:-1",
+                     frame_path, "-y"],
+                    capture_output=True, timeout=30
+                )
+                fp = Path(frame_path)
+                if fp.exists() and fp.stat().st_size > 0:
+                    frames.append(base64.standard_b64encode(fp.read_bytes()).decode())
+    except Exception as e:
+        logger.error(f"Frame-Extraktion fehlgeschlagen: {e}")
+    return frames
+
+
+def _transcribe_audio(video_path: str) -> str:
+    """Extrahiert Audio und transkribiert gesprochenen Text (Deutsch)."""
+    import subprocess, tempfile
+    transcript = ""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = f"{tmpdir}/audio.wav"
+            # Audio extrahieren — max 60 Sekunden, mono, 16kHz für SR
+            subprocess.run(
+                ["ffmpeg", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
+                 "-ar", "16000", "-ac", "1", "-t", "60", audio_path, "-y"],
+                capture_output=True, timeout=60
+            )
+            if not Path(audio_path).exists():
+                return ""
+            import speech_recognition as sr
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(audio_path) as source:
+                audio_data = recognizer.record(source)
+            transcript = recognizer.recognize_google(audio_data, language="de-DE")
+            logger.info(f"Transkription: {transcript[:100]}...")
+    except Exception as e:
+        logger.warning(f"Transkription fehlgeschlagen (kein Problem): {e}")
+    return transcript
+
+
+def analyze_video_and_generate_setup(video_path: str, video_name: str) -> dict:
+    """Analysiert Video vollständig: 10 Frames (visuell) + Audio-Transkript → Claude."""
+    if not ANTHROPIC_API_KEY:
+        return {"error": "Anthropic API Key fehlt"}
+
+    # Parallel: Frames extrahieren + Audio transkribieren
+    frames    = _extract_frames(video_path, num_frames=10)
+    transcript = _transcribe_audio(video_path)
+
+    if not frames:
+        logger.warning("Keine Frames — Fallback auf Dateiname-Analyse")
+        return generate_full_ad_setup(video_name)
+
+    # Claude-Anfrage aufbauen: Bilder + Text
+    content = []
+    for frame in frames:
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": frame}
+        })
+
+    transcript_block = f"\n\nGesprochener Text im Video (Transkript):\n\"{transcript}\"" if transcript else ""
+
+    content.append({
+        "type": "text",
+        "text": f"""Das sind {len(frames)} Screenshots aus einem Werbevideo von Weingut Huppert (Gundersheim, Rheinhessen).
+Dateiname: {video_name}{transcript_block}
+
+Analysiere das Video vollständig — was zu sehen ist, was gesagt wird — und erstelle ein komplettes Meta Ads Setup das den echten Inhalt widerspiegelt.
+
+Antworte NUR mit diesem JSON (kein Markdown):
+{{
+  "video_inhalt": "Was ist konkret zu sehen und was wird gesagt? 2-3 präzise Sätze",
+  "primary_text": "Haupttext max. 125 Zeichen, basierend auf echtem Video-Inhalt",
+  "headline": "max. 40 Zeichen",
+  "description": "max. 30 Zeichen",
+  "cta": "SHOP_NOW oder LEARN_MORE oder WATCH_MORE",
+  "kampagnenziel": "VIDEO_VIEWS oder CONVERSIONS oder REACH",
+  "zielgruppe_alter": "z.B. 30-65",
+  "zielgruppe_geschlecht": "ALL oder MALE oder FEMALE",
+  "zielgruppe_interessen": ["Wein", "Genuss", "..."],
+  "zielgruppe_standort": "Deutschland, Österreich, Schweiz",
+  "placements": ["Facebook Feed", "Instagram Reels", "Stories"],
+  "optimierungsziel": "THRUPLAY oder LINK_CLICKS",
+  "gebotstrategie": "LOWEST_COST",
+  "tagesbudget_eur": 5,
+  "laufzeit_empfehlung": "7 Tage testen",
+  "hinweis": "Konkreter Tipp basierend auf dem tatsächlichen Video-Inhalt"
+}}"""
+    })
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=900,
+            system=BRAND_CONTEXT,
+            messages=[{"role": "user", "content": content}]
+        )
+        raw = response.content[0].text.strip()
+        data = json.loads(raw)
+        logger.info(f"Video-Analyse abgeschlossen: {video_name} ({len(frames)} Frames, Transkript: {'ja' if transcript else 'nein'})")
+        return data
+    except Exception as e:
+        logger.error(f"Claude Vision Fehler: {e}")
+        return generate_full_ad_setup(video_name)
+
+
 def _default_texts() -> dict:
     return {
         "primary_text": "Entdecken Sie unsere handgemachten Weine aus Rheinhessen.",

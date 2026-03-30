@@ -977,13 +977,33 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
     size_mb = int(video.get("size", 0)) / 1024 / 1024
 
     await update.message.reply_text(
-        f"🤖 Generiere Setup für:\n`{video_name}`...",
+        f"🎬 Lade Video herunter & analysiere Inhalt...\n`{video_name}`",
         parse_mode="Markdown"
     )
 
     try:
-        from text_generator import generate_full_ad_setup
-        s = generate_full_ad_setup(video_name)
+        from gdrive_sync import download_drive_file
+        from text_generator import analyze_video_and_generate_setup, generate_full_ad_setup
+        import tempfile, shutil
+
+        # Video temporär herunterladen
+        tmp_path = None
+        try:
+            tmp_path = download_drive_file(video)
+        except Exception as e:
+            logger.warning(f"Download fehlgeschlagen: {e}")
+
+        if tmp_path and tmp_path.exists():
+            await update.message.reply_text("🔍 Claude analysiert Video-Inhalt...", parse_mode="Markdown")
+            s = analyze_video_and_generate_setup(str(tmp_path), video_name)
+            # Temp-Datei sofort löschen
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+        else:
+            await update.message.reply_text("⚠️ Download nicht möglich — generiere auf Basis des Dateinamens...", parse_mode="Markdown")
+            s = generate_full_ad_setup(video_name)
 
         if s.get("error"):
             await update.message.reply_text(f"❌ Fehler: {s['error']}")
@@ -992,10 +1012,12 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
         interessen = ", ".join(s.get("zielgruppe_interessen", [])) or "—"
         placements = ", ".join(s.get("placements", [])) or "—"
 
+        video_inhalt = s.get("video_inhalt", "")
         msg = (
             f"✍️ *Ads Manager Setup — Nr. {nr}*\n"
             f"📁 `{video_name}` ({size_mb:.0f} MB)\n\n"
-            f"━━━━ *AD TEXTE* ━━━━\n\n"
+            + (f"🎬 *Video-Inhalt:*\n{video_inhalt}\n\n" if video_inhalt else "")
+            + f"━━━━ *AD TEXTE* ━━━━\n\n"
             f"*📢 Primary Text:*\n{s.get('primary_text', '—')}\n\n"
             f"*🏷️ Headline:*\n{s.get('headline', '—')}\n\n"
             f"*📝 Description:*\n{s.get('description', '—')}\n\n"
