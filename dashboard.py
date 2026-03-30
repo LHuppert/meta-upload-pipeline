@@ -213,6 +213,8 @@ BASE_HTML = """<!DOCTYPE html>
 <nav>
   <span class="logo">🍷 Meta Upload</span>
   <a href="/dashboard" {% if active=='dashboard' %}class="active"{% endif %}>Dashboard</a>
+  <a href="/kpi" {% if active=='kpi' %}class="active"{% endif %}>📊 KPI-Analyse</a>
+  <a href="/texte" {% if active=='texte' %}class="active"{% endif %}>✍️ Ad-Texte</a>
   <a href="/einstellungen" {% if active=='settings' %}class="active"{% endif %}>Einstellungen</a>
   <a href="/logs" {% if active=='logs' %}class="active"{% endif %}>Logs</a>
   <a href="/logout" style="margin-left:auto;color:#f88">Abmelden</a>
@@ -898,6 +900,250 @@ def logs_page():
     </div>
     """
     return render_page(content, active="logs")
+
+
+# ── KPI & Ad-Texte Helfer ─────────────────────────────────────────────────────
+
+def fetch_meta_kpis(date_preset: str = "last_7d") -> tuple:
+    """Holt Kampagnen-KPIs von Meta Marketing API. Gibt (data, error) zurück."""
+    import requests as _req
+    token   = os.getenv("META_ACCESS_TOKEN", "")
+    account = os.getenv("META_AD_ACCOUNT_ID", "").lstrip("act_")
+    if not token or not account:
+        return None, "META_ACCESS_TOKEN oder META_AD_ACCOUNT_ID nicht gesetzt."
+    url = f"https://graph.facebook.com/v18.0/act_{account}/insights"
+    params = {
+        "fields":      "campaign_name,impressions,clicks,ctr,cpm,spend,reach,frequency,actions",
+        "date_preset": date_preset,
+        "level":       "campaign",
+        "access_token": token,
+    }
+    try:
+        r = _req.get(url, params=params, timeout=20)
+        data = r.json()
+        if "error" in data:
+            return None, data["error"].get("message", str(data["error"]))
+        return data.get("data", []), None
+    except Exception as e:
+        return None, str(e)
+
+
+def analyze_kpis_with_claude(kpis: list) -> str:
+    """Lässt Claude die KPI-Daten analysieren und Empfehlungen geben."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "⚠️ Anthropic API Key nicht gesetzt — keine AI-Analyse verfügbar."
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        kpi_text = json.dumps(kpis, indent=2, ensure_ascii=False)
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=900,
+            messages=[{"role": "user", "content": f"""Du bist ein Meta Ads Experte für Weingut Huppert (Rheinhessen).
+Analysiere diese Kampagnen-KPIs der letzten Tage und gib konkrete Handlungsempfehlungen auf Deutsch.
+
+KPI-Daten:
+{kpi_text}
+
+Antworte in diesem Format:
+**Zusammenfassung** (2-3 Sätze)
+
+**Was gut läuft ✅**
+- ...
+
+**Was optimiert werden sollte ⚠️**
+- ...
+
+**Konkrete Empfehlungen 🎯**
+- ...
+"""}]
+        )
+        return response.content[0].text
+    except Exception as e:
+        return f"Fehler bei Claude-Analyse: {e}"
+
+
+def generate_ad_texts_for_video(video_name: str, extra_info: str = "") -> dict:
+    """Generiert Meta Ad Texte per Claude."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return {"error": "Anthropic API Key fehlt", "primary_text": "", "headline": "", "description": ""}
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=600,
+            system="Du erstellst Meta Ad Texte für Weingut Huppert, Gundersheim (Rheinhessen). Ton: authentisch, warm, einladend. Sprache: Deutsch.",
+            messages=[{"role": "user", "content": f"""Erstelle Meta Ad Texte für dieses Video:
+Video: {video_name}
+{f"Zusatzinfo: {extra_info}" if extra_info else ""}
+
+Antworte NUR mit diesem JSON (kein Markdown, keine Erklärung):
+{{"primary_text": "max 125 Zeichen, 1-2 Sätze", "headline": "max 40 Zeichen", "description": "max 30 Zeichen", "cta": "SHOP_NOW oder LEARN_MORE"}}"""}]
+        )
+        raw = response.content[0].text.strip()
+        return json.loads(raw)
+    except Exception as e:
+        return {"error": str(e), "primary_text": "", "headline": "", "description": ""}
+
+
+# ── KPI-Analyse Seite ──────────────────────────────────────────────────────────
+
+@app.route("/kpi")
+@login_required
+def kpi_page():
+    preset   = request.args.get("preset", "last_7d")
+    kpis, err = fetch_meta_kpis(preset)
+    analyse   = ""
+
+    preset_labels = {
+        "last_7d":  "Letzte 7 Tage",
+        "last_14d": "Letzte 14 Tage",
+        "last_30d": "Letzte 30 Tage",
+        "this_month": "Dieser Monat",
+    }
+
+    # Tabellen-Zeilen
+    rows = ""
+    if kpis:
+        for k in kpis:
+            conv = sum(int(a.get("value", 0)) for a in k.get("actions", []) if a.get("action_type") == "purchase")
+            ctr  = float(k.get("ctr", 0)) * 100
+            rows += f"""<tr>
+              <td style="font-weight:600">{k.get('campaign_name','—')}</td>
+              <td>{int(k.get('impressions', 0)):,}</td>
+              <td>{int(k.get('clicks', 0)):,}</td>
+              <td>{ctr:.2f}%</td>
+              <td>EUR {float(k.get('cpm', 0)):.2f}</td>
+              <td>EUR {float(k.get('spend', 0)):.2f}</td>
+              <td>{conv}</td>
+            </tr>"""
+        analyse = analyze_kpis_with_claude(kpis)
+
+    error_html  = f'<div class="alert alert-danger">❌ {err}</div>' if err else ""
+    table_html  = f"""<table>
+      <thead><tr>
+        <th>Kampagne</th><th>Impressionen</th><th>Klicks</th>
+        <th>CTR</th><th>CPM</th><th>Spend</th><th>Käufe</th>
+      </tr></thead>
+      <tbody>{rows if rows else '<tr><td colspan="7" style="text-align:center;color:#999">Keine Daten</td></tr>'}</tbody>
+    </table>""" if not err else ""
+
+    analyse_html = ""
+    if analyse:
+        import re
+        # Einfaches Markdown → HTML
+        html_analyse = analyse.replace("**", "<strong>", 1)
+        parts = analyse.split("**")
+        html_analyse = ""
+        for i, p in enumerate(parts):
+            if i % 2 == 1:
+                html_analyse += f"<strong>{p}</strong>"
+            else:
+                html_analyse += p.replace("\n- ", "\n• ").replace("\n", "<br>")
+        analyse_html = f"""<div class="card" style="margin-top:20px">
+          <div class="card" style="background:#f0f4ff;border:1px solid #c7d2fe;padding:16px;border-radius:8px;line-height:1.7">
+            {html_analyse}
+          </div>
+        </div>"""
+
+    preset_btns = "".join(
+        f'<a href="/kpi?preset={p}" class="btn btn-sm {"btn-primary" if preset==p else ""}" style="margin-right:6px">{label}</a>'
+        for p, label in preset_labels.items()
+    )
+
+    content = f"""
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+      <h1 style="font-size:1.4em">📊 KPI-Analyse — {preset_labels.get(preset, preset)}</h1>
+      <div>{preset_btns}</div>
+    </div>
+    {error_html}
+    <div class="card">
+      <h2>Kampagnen-Performance</h2>
+      {table_html}
+    </div>
+    {analyse_html}
+    """
+    return render_page(content, active="kpi")
+
+
+# ── Ad-Texte Generator ─────────────────────────────────────────────────────────
+
+@app.route("/texte", methods=["GET", "POST"])
+@login_required
+def texte_page():
+    result     = None
+    video_name = ""
+    extra_info = ""
+
+    if request.method == "POST":
+        video_name = request.form.get("video_name", "").strip()
+        extra_info = request.form.get("extra_info", "").strip()
+        if video_name:
+            result = generate_ad_texts_for_video(video_name, extra_info)
+
+    result_html = ""
+    if result:
+        if result.get("error"):
+            result_html = f'<div class="alert alert-danger">❌ {result["error"]}</div>'
+        else:
+            def copy_field(label, value, field_id):
+                return f"""<div class="card" style="background:#f8f9fc;padding:16px;margin-bottom:12px">
+                  <div style="font-size:.8em;font-weight:600;color:#666;text-transform:uppercase;margin-bottom:8px">{label}</div>
+                  <div style="font-size:1.05em;margin-bottom:10px;line-height:1.5" id="{field_id}">{value}</div>
+                  <button onclick="navigator.clipboard.writeText(document.getElementById('{field_id}').innerText);this.textContent='✅ Kopiert!';setTimeout(()=>this.textContent='📋 Kopieren',2000)"
+                    class="btn btn-sm" style="background:#e9ecef">📋 Kopieren</button>
+                </div>"""
+
+            result_html = f"""
+            <div class="card" style="margin-top:20px;border:2px solid #28a745">
+              <h2 style="color:#28a745;margin-bottom:16px">✅ Ad-Texte generiert</h2>
+              {copy_field("Primary Text (Haupttext)", result.get("primary_text",""), "pt")}
+              {copy_field("Headline (Überschrift)", result.get("headline",""), "hl")}
+              {copy_field("Description", result.get("description",""), "desc")}
+              {copy_field("Call-to-Action", result.get("cta", "SHOP_NOW"), "cta")}
+            </div>"""
+
+    content = f"""
+    <h1 style="font-size:1.4em;margin-bottom:20px">✍️ Ad-Texte Generator</h1>
+    <div class="card">
+      <h2>Video-Informationen eingeben</h2>
+      <p style="color:#666;font-size:.9em;margin-bottom:16px">
+        Gib den Video-Namen oder eine kurze Beschreibung ein — Claude generiert sofort passende Meta Ad Texte.
+        Du kannst die Texte dann direkt in Meta Ads Manager einfügen.
+      </p>
+      <form method="POST">
+        <div class="field">
+          <label>Video-Name / Titel *</label>
+          <input type="text" name="video_name" value="{video_name}"
+            placeholder="z.B. Weinlese_Herbst_2025.mp4 oder Rotwein Spätburgunder Vorstellung"
+            style="width:100%;max-width:600px" required>
+        </div>
+        <div class="field">
+          <label>Zusatzinfos (optional)</label>
+          <input type="text" name="extra_info" value="{extra_info}"
+            placeholder="z.B. Spätburgunder 2023, Angebot 10% Rabatt, für Instagram Reels"
+            style="width:100%;max-width:600px">
+        </div>
+        <button type="submit" class="btn btn-primary">🤖 Texte generieren</button>
+      </form>
+    </div>
+    {result_html}
+    <div class="card" style="margin-top:20px;background:#fff8e1;border:1px solid #ffe082">
+      <h2 style="color:#856404">💡 So verwendest du die Texte</h2>
+      <ol style="margin-left:20px;line-height:2;color:#666;font-size:.9em">
+        <li>Video in <strong>Meta Ads Manager</strong> hochladen</li>
+        <li>Neue Anzeige erstellen → Video auswählen</li>
+        <li><strong>Primary Text</strong> in das Textfeld einfügen</li>
+        <li><strong>Headline</strong> in die Überschrift</li>
+        <li><strong>Description</strong> in die Beschreibung</li>
+        <li>Call-to-Action Button auswählen (z.B. "Jetzt einkaufen")</li>
+      </ol>
+    </div>
+    """
+    return render_page(content, active="texte")
 
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
