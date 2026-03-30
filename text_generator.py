@@ -80,6 +80,51 @@ def load_texts_for_video(video_path) -> dict:
     return None
 
 
+def generate_full_ad_setup(video_filename: str, extra_context: str = "") -> dict:
+    """Generiert komplettes Ad-Setup: Texte + alle Ads Manager Einstellungen."""
+    if not ANTHROPIC_API_KEY:
+        logger.warning("ANTHROPIC_API_KEY nicht gesetzt")
+        return {"error": "API Key fehlt", **_default_texts()}
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        prompt = f"""Du erstellst ein komplettes Meta Ads Setup fuer Weingut Huppert (Gundersheim, Rheinhessen).
+Video: {video_filename}
+{f"Zusatzinfo: {extra_context}" if extra_context else ""}
+
+Antworte NUR mit diesem JSON (kein Markdown, keine Erklaerung):
+{{
+  "primary_text": "Haupttext max. 125 Zeichen, 1-2 Saetze, einladend",
+  "headline": "Ueberschrift max. 40 Zeichen",
+  "description": "Kurzbeschreibung max. 30 Zeichen",
+  "cta": "SHOP_NOW oder LEARN_MORE oder WATCH_MORE",
+  "kampagnenziel": "z.B. VIDEO_VIEWS oder CONVERSIONS oder REACH - passendes Ziel fuer Weingut-Video",
+  "zielgruppe_alter": "z.B. 30-65",
+  "zielgruppe_geschlecht": "ALL oder MALE oder FEMALE",
+  "zielgruppe_interessen": ["Wein", "Genuss", "..."],
+  "zielgruppe_standort": "Deutschland, Oesterreich, Schweiz",
+  "placements": ["Facebook Feed", "Instagram Feed", "Instagram Reels", "Stories"],
+  "optimierungsziel": "z.B. THRUPLAY oder LINK_CLICKS oder IMPRESSIONS",
+  "gebotstrategie": "LOWEST_COST oder COST_CAP",
+  "tagesbudget_eur": 5,
+  "laufzeit_empfehlung": "z.B. 7 Tage testen",
+  "hinweis": "1 kurzer Hinweis was bei diesem Video-Typ besonders wichtig ist"
+}}"""
+        response = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=800,
+            system=BRAND_CONTEXT,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = response.content[0].text.strip()
+        data = json.loads(raw)
+        logger.info(f"Volles Ad-Setup generiert fuer {video_filename}")
+        return data
+    except Exception as e:
+        logger.error(f"Fehler bei vollstaendigem Ad-Setup: {e}")
+        return {"error": str(e), **_default_texts()}
+
+
 def _default_texts() -> dict:
     return {
         "primary_text": "Entdecken Sie unsere handgemachten Weine aus Rheinhessen.",

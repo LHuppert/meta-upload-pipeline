@@ -901,18 +901,39 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        from text_generator import generate_ad_texts
-        texts = generate_ad_texts(video_name)
+        from text_generator import generate_full_ad_setup
+        s = generate_full_ad_setup(video_name)
+
+        if s.get("error"):
+            await update.message.reply_text(f"❌ Fehler: {s['error']}")
+            return
+
+        interessen = ", ".join(s.get("zielgruppe_interessen", [])) or "—"
+        placements = ", ".join(s.get("placements", [])) or "—"
+
         msg = (
-            f"✍️ *Ad-Texte für Video {nr}*\n\n"
-            f"📁 `{video_name}`\n"
-            f"📦 {size_mb:.0f} MB\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"*📢 Primary Text:*\n{texts.get('primary_text', '—')}\n\n"
-            f"*🏷️ Headline:*\n{texts.get('headline', '—')}\n\n"
-            f"*📝 Description:*\n{texts.get('description', '—')}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📋 Texte kopieren und in Meta Ads Manager einfügen."
+            f"✍️ *Ads Manager Setup — Video {nr}*\n"
+            f"📁 `{video_name}`\n\n"
+            f"━━━━ *AD TEXTE* ━━━━\n\n"
+            f"*📢 Primary Text:*\n{s.get('primary_text', '—')}\n\n"
+            f"*🏷️ Headline:*\n{s.get('headline', '—')}\n\n"
+            f"*📝 Description:*\n{s.get('description', '—')}\n\n"
+            f"*🔘 CTA Button:* `{s.get('cta', '—')}`\n\n"
+            f"━━━━ *KAMPAGNE* ━━━━\n\n"
+            f"🎯 Kampagnenziel: `{s.get('kampagnenziel', '—')}`\n"
+            f"📊 Optimierungsziel: `{s.get('optimierungsziel', '—')}`\n"
+            f"💰 Gebotstrategie: `{s.get('gebotstrategie', '—')}`\n"
+            f"💵 Tagesbudget: *{s.get('tagesbudget_eur', '—')} EUR*\n"
+            f"📅 Laufzeit: {s.get('laufzeit_empfehlung', '—')}\n\n"
+            f"━━━━ *ZIELGRUPPE* ━━━━\n\n"
+            f"👥 Alter: `{s.get('zielgruppe_alter', '—')}`\n"
+            f"⚥ Geschlecht: `{s.get('zielgruppe_geschlecht', '—')}`\n"
+            f"🌍 Standort: {s.get('zielgruppe_standort', '—')}\n"
+            f"💡 Interessen: {interessen}\n\n"
+            f"━━━━ *PLACEMENTS* ━━━━\n\n"
+            f"📱 {placements}\n\n"
+            f"━━━━ *HINWEIS* ━━━━\n\n"
+            f"💬 {s.get('hinweis', '—')}"
         )
         await update.message.reply_text(msg, parse_mode="Markdown")
     except Exception as e:
