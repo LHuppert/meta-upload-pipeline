@@ -125,22 +125,48 @@ Antworte NUR mit diesem JSON (kein Markdown, keine Erklaerung):
         return {"error": str(e), **_default_texts()}
 
 
+def _get_ffmpeg() -> str:
+    """Gibt den Pfad zum ffmpeg-Binary zurück (imageio-ffmpeg oder System)."""
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"
+
+
+def _get_ffprobe() -> str:
+    """Gibt den Pfad zum ffprobe-Binary zurück."""
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        return exe.replace("ffmpeg", "ffprobe")
+    except Exception:
+        return "ffprobe"
+
+
 def _get_video_duration(video_path: str) -> float:
     """Gibt Video-Dauer in Sekunden zurück."""
     import subprocess
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+            [_get_ffmpeg(), "-i", video_path, "-f", "null", "-"],
             capture_output=True, text=True, timeout=30
         )
-        return float(json.loads(probe.stdout).get("format", {}).get("duration", 30))
+        # Dauer aus stderr parsen: "Duration: 00:01:23.45"
+        for line in probe.stderr.splitlines():
+            if "Duration:" in line:
+                parts = line.split("Duration:")[1].split(",")[0].strip()
+                h, m, s = parts.split(":")
+                return int(h) * 3600 + int(m) * 60 + float(s)
     except Exception:
-        return 30.0
+        pass
+    return 30.0
 
 
 def _extract_frames(video_path: str, num_frames: int = 10) -> list:
     """Extrahiert gleichmäßig verteilte Frames als base64-JPEG-Liste."""
     import subprocess, base64, tempfile
+    ffmpeg = _get_ffmpeg()
     frames = []
     try:
         duration = _get_video_duration(video_path)
@@ -149,7 +175,7 @@ def _extract_frames(video_path: str, num_frames: int = 10) -> list:
                 t = duration * (i + 1) / (num_frames + 1)
                 frame_path = f"{tmpdir}/frame_{i:02d}.jpg"
                 subprocess.run(
-                    ["ffmpeg", "-ss", str(t), "-i", video_path,
+                    [ffmpeg, "-ss", str(t), "-i", video_path,
                      "-vframes", "1", "-q:v", "3", "-vf", "scale=640:-1",
                      frame_path, "-y"],
                     capture_output=True, timeout=30
@@ -165,13 +191,13 @@ def _extract_frames(video_path: str, num_frames: int = 10) -> list:
 def _transcribe_audio(video_path: str) -> str:
     """Extrahiert Audio und transkribiert gesprochenen Text (Deutsch)."""
     import subprocess, tempfile
+    ffmpeg = _get_ffmpeg()
     transcript = ""
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = f"{tmpdir}/audio.wav"
-            # Audio extrahieren — max 60 Sekunden, mono, 16kHz für SR
             subprocess.run(
-                ["ffmpeg", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
+                [ffmpeg, "-i", video_path, "-vn", "-acodec", "pcm_s16le",
                  "-ar", "16000", "-ac", "1", "-t", "60", audio_path, "-y"],
                 capture_output=True, timeout=60
             )
