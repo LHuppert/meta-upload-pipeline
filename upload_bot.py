@@ -849,6 +849,15 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _gdrive_cache: list = []
 
 
+def _esc(text) -> str:
+    """Telegram Markdown V1: Sonderzeichen aus dynamischem Inhalt entfernen.
+    Markdown V1 hat keine Escape-Sequenzen — *_`[ werden einfach entfernt."""
+    s = str(text) if text else "—"
+    for ch in ["*", "_", "`", "["]:
+        s = s.replace(ch, "")
+    return s
+
+
 async def cmd_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Zeigt alle Videos in Google Drive mit Nummern."""
     global _gdrive_cache
@@ -1010,36 +1019,43 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Fehler: {s['error']}")
             return
 
-        interessen = ", ".join(s.get("zielgruppe_interessen", [])) or "—"
-        placements = ", ".join(s.get("placements", [])) or "—"
+        interessen = _esc(", ".join(s.get("zielgruppe_interessen", [])) or "—")
+        placements = _esc(", ".join(s.get("placements", [])) or "—")
 
-        video_inhalt = s.get("video_inhalt", "")
+        video_inhalt = _esc(s.get("video_inhalt", ""))
         msg = (
             f"✍️ *Ads Manager Setup — Nr. {nr}*\n"
             f"📁 `{video_name}` ({size_mb:.0f} MB)\n\n"
-            + (f"🎬 *Video-Inhalt:*\n{video_inhalt}\n\n" if video_inhalt else "")
+            + (f"🎬 *Video-Inhalt:*\n{video_inhalt}\n\n" if s.get("video_inhalt") else "")
             + f"━━━━ *AD TEXTE* ━━━━\n\n"
-            f"*📢 Primary Text:*\n{s.get('primary_text', '—')}\n\n"
-            f"*🏷️ Headline:*\n{s.get('headline', '—')}\n\n"
-            f"*📝 Description:*\n{s.get('description', '—')}\n\n"
-            f"*🔘 CTA Button:* `{s.get('cta', '—')}`\n\n"
+            f"*📢 Primary Text:*\n{_esc(s.get('primary_text', '—'))}\n\n"
+            f"*🏷️ Headline:*\n{_esc(s.get('headline', '—'))}\n\n"
+            f"*📝 Description:*\n{_esc(s.get('description', '—'))}\n\n"
+            f"*🔘 CTA:* {_esc(s.get('cta', '—'))}\n\n"
             f"━━━━ *KAMPAGNE* ━━━━\n\n"
-            f"🎯 Kampagnenziel: `{s.get('kampagnenziel', '—')}`\n"
-            f"📊 Optimierungsziel: `{s.get('optimierungsziel', '—')}`\n"
-            f"💰 Gebotstrategie: `{s.get('gebotstrategie', '—')}`\n"
-            f"💵 Tagesbudget: *{s.get('tagesbudget_eur', '—')} EUR*\n"
-            f"📅 Laufzeit: {s.get('laufzeit_empfehlung', '—')}\n\n"
+            f"🎯 Ziel: {_esc(s.get('kampagnenziel', '—'))}\n"
+            f"📊 Optimierung: {_esc(s.get('optimierungsziel', '—'))}\n"
+            f"💰 Gebot: {_esc(s.get('gebotstrategie', '—'))}\n"
+            f"💵 Budget: *{_esc(s.get('tagesbudget_eur', '—'))} EUR/Tag*\n"
+            f"📅 Laufzeit: {_esc(s.get('laufzeit_empfehlung', '—'))}\n\n"
             f"━━━━ *ZIELGRUPPE* ━━━━\n\n"
-            f"👥 Alter: `{s.get('zielgruppe_alter', '—')}`\n"
-            f"⚥ Geschlecht: `{s.get('zielgruppe_geschlecht', '—')}`\n"
-            f"🌍 Standort: {s.get('zielgruppe_standort', '—')}\n"
+            f"👥 Alter: {_esc(s.get('zielgruppe_alter', '—'))}\n"
+            f"⚥ Geschlecht: {_esc(s.get('zielgruppe_geschlecht', '—'))}\n"
+            f"🌍 Standort: {_esc(s.get('zielgruppe_standort', '—'))}\n"
             f"💡 Interessen: {interessen}\n\n"
             f"━━━━ *PLACEMENTS* ━━━━\n\n"
             f"📱 {placements}\n\n"
             f"━━━━ *HINWEIS* ━━━━\n\n"
-            f"💬 {s.get('hinweis', '—')}"
+            f"💬 {_esc(s.get('hinweis', '—'))}"
         )
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        try:
+            await update.message.reply_text(msg, parse_mode="Markdown")
+        except Exception as md_err:
+            logger.warning(f"Markdown-Fehler, sende als Plaintext: {md_err}")
+            # Plaintext-Fallback: alle Escape-Backslashes entfernen
+            plain = msg.replace("\\*", "*").replace("\\_", "_").replace("\\`", "`").replace("\\[", "[")
+            plain = plain.replace("*", "").replace("`", "").replace("━", "-")
+            await update.message.reply_text(plain)
     except Exception as e:
         await update.message.reply_text(f"❌ Fehler bei Textgenerierung: {e}")
 
