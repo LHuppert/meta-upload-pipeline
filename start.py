@@ -1,13 +1,14 @@
 """
 start.py — Startet Dashboard + Telegram Bot zusammen in einem Prozess.
 Für Render Free Plan: alles in einem Web Service.
+
+Sync-Logik liegt vollständig im upload_bot.py (alle 15 Min via APScheduler).
+start.py ist nur der Prozess-Starter.
 """
 
 import threading
 import logging
 import os
-import sys
-from apscheduler.schedulers.background import BackgroundScheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,33 +17,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_onedrive_sync():
-    """OneDrive + Google Drive Sync im Hintergrund — alle 5 Minuten."""
-    try:
-        from onedrive_sync import sync_onedrive
-        from gdrive_sync import sync_gdrive
-        new_videos = sync_onedrive() + sync_gdrive()
-        if len(new_videos) > 0:
-            logger.info(f"Sync: {len(new_videos)} neue Videos heruntergeladen — starte Upload")
-            threading.Thread(target=run_meta_upload, daemon=True).start()
-    except Exception as e:
-        logger.error(f"OneDrive-Sync Fehler: {e}")
-
-
-def run_meta_upload():
-    """Meta-Upload im Hintergrund starten."""
-    try:
-        from meta_uploader import run_upload_batch
-        logger.info("Meta-Upload gestartet...")
-        run_upload_batch()
-    except Exception as e:
-        logger.error(f"Meta-Upload Fehler: {e}")
-
-
 def run_dashboard():
     """Flask Dashboard in eigenem Thread."""
     from dashboard import app
-    port = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 10000))
     logger.info(f"Dashboard startet auf Port {port}")
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
@@ -65,16 +43,7 @@ def run_bot():
 if __name__ == "__main__":
     logger.info("Weingut Huppert — Meta Upload Pipeline startet")
 
-    # OneDrive-Sync alle 5 Minuten
-    if os.getenv("ONEDRIVE_SHARE_URL"):
-        sync_scheduler = BackgroundScheduler()
-        sync_scheduler.add_job(run_onedrive_sync, "interval", minutes=5, id="onedrive_sync")
-        sync_scheduler.start()
-        logger.info("OneDrive-Sync Scheduler gestartet (alle 5 Minuten)")
-        # Im Hintergrund starten — sonst blockiert der Download den Port-Binding!
-        threading.Thread(target=run_onedrive_sync, daemon=True, name="StartupSync").start()
-
-    # Bot in Hintergrund-Thread
+    # Bot in Hintergrund-Thread (übernimmt Sync alle 15 Min)
     bot_thread = threading.Thread(target=run_bot, daemon=True, name="TelegramBot")
     bot_thread.start()
     logger.info("Telegram Bot Thread gestartet")
