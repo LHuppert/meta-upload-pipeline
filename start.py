@@ -71,7 +71,8 @@ if __name__ == "__main__":
         sync_scheduler.add_job(run_onedrive_sync, "interval", minutes=5, id="onedrive_sync")
         sync_scheduler.start()
         logger.info("OneDrive-Sync Scheduler gestartet (alle 5 Minuten)")
-        run_onedrive_sync()  # Sofort beim Start einmal ausführen
+        # Im Hintergrund starten — sonst blockiert der Download den Port-Binding!
+        threading.Thread(target=run_onedrive_sync, daemon=True, name="StartupSync").start()
 
     # Bot in Hintergrund-Thread
     bot_thread = threading.Thread(target=run_bot, daemon=True, name="TelegramBot")
