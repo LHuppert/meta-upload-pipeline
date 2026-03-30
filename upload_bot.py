@@ -607,54 +607,85 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 async def send_daily_report(context):
-    if settings.is_paused():
-        logger.info("Tagesbericht übersprungen — Pause aktiv")
-        return
     if not settings.get("schedule.daily_report_enabled", True):
         return
 
-    uploads_today = get_uploads_today()
-    daily_limit   = settings.get_daily_limit()
-    health_emoji  = safety_monitor.get_status_emoji()
-    health_data   = safety_monitor.get_health()
-    queue_count   = 0
-    try:
-        from meta_uploader import load_queue
-        queue_count = len([q for q in load_queue() if q["status"] == "pending"])
-    except Exception:
-        pass
-
-    # Letzte 5 Uploads
-    log   = get_upload_log()[:5]
     today = datetime.now().date().isoformat()
-    log_lines = ""
-    for u in log:
-        if u.get("date") == today:
-            icon = "✅" if u.get("status") == "success" else "❌"
-            ts   = u.get("timestamp", "")[:16].split("T")
-            time = ts[1] if len(ts) > 1 else ""
-            log_lines += f"{icon} {u.get('filename','?')[:30]} {time}\n"
 
-    text = (
-        f"📊 *Tagesbericht — {today}*\n\n"
-        f"Uploads heute: {uploads_today}/{daily_limit}\n"
-        f"Queue: {queue_count} Videos warten\n"
-        f"Account Health: {health_emoji}\n"
-        f"Fehler in Folge: {health_data.get('consecutive_errors', 0)}\n"
-    )
-    if settings.is_paused():
-        text += f"\n🛑 *PAUSE AKTIV*: {settings.get('safety.pause_reason', '')}\n"
-    if log_lines:
-        text += f"\n*Heutige Uploads:*\n{log_lines}"
-    text += f"\nMorgen verfügbar: {daily_limit} Uploads"
+    # ── Meta KPIs abrufen ──────────────────────────────────────────────────────
+    kpi_text  = ""
+    kpi_lines = ""
+    try:
+        import requests as _req
+        token   = os.getenv("META_ACCESS_TOKEN", "")
+        account = os.getenv("META_AD_ACCOUNT_ID", "").lstrip("act_")
+        if token and account:
+            r = _req.get(
+                f"https://graph.facebook.com/v18.0/act_{account}/insights",
+                params={
+                    "fields":      "campaign_name,impressions,clicks,ctr,cpm,spend,actions",
+                    "date_preset": "last_7d",
+                    "level":       "campaign",
+                    "access_token": token,
+                },
+                timeout=15,
+            )
+            data = r.json().get("data", [])
+            for k in data:
+                conv = sum(int(a.get("value", 0)) for a in k.get("actions", []) if a.get("action_type") == "purchase")
+                ctr  = float(k.get("ctr", 0)) * 100
+                kpi_lines += (
+                    f"• {k.get('campaign_name','?')[:30]}: "
+                    f"{int(k.get('impressions',0)):,} Imp | "
+                    f"CTR {ctr:.1f}% | "
+                    f"CPM EUR {float(k.get('cpm',0)):.2f} | "
+                    f"Spend EUR {float(k.get('spend',0)):.2f} | "
+                    f"{conv} Käufe\n"
+                )
+            kpi_text = "\n".join([
+                f"campaign_name: {k.get('campaign_name')}, impressions: {k.get('impressions')}, "
+                f"clicks: {k.get('clicks')}, ctr: {float(k.get('ctr',0))*100:.2f}%, "
+                f"cpm: {k.get('cpm')}, spend: {k.get('spend')}"
+                for k in data
+            ])
+    except Exception as e:
+        logger.warning(f"KPI-Abruf fehlgeschlagen: {e}")
+
+    # ── Claude-Empfehlungen ────────────────────────────────────────────────────
+    empfehlungen = ""
+    if kpi_text:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+            resp = client.messages.create(
+                model="claude-opus-4-5",
+                max_tokens=600,
+                messages=[{"role": "user", "content":
+                    f"Du bist Meta Ads Experte für Weingut Huppert. "
+                    f"Basierend auf diesen KPIs der letzten 7 Tage:\n{kpi_text}\n\n"
+                    f"Gib 3-5 konkrete Handlungsempfehlungen für HEUTE auf Deutsch. "
+                    f"Kurz und direkt, nur Bullet-Liste, kein Intro."
+                }]
+            )
+            empfehlungen = resp.content[0].text.strip()
+        except Exception as e:
+            empfehlungen = f"(Analyse nicht verfügbar: {e})"
+
+    # ── Nachricht zusammenbauen ────────────────────────────────────────────────
+    text = f"📊 *Tagesbericht — {today}*\n\n"
+
+    if kpi_lines:
+        text += f"*Kampagnen (letzte 7 Tage):*\n{kpi_lines}\n"
+
+    if empfehlungen:
+        text += f"*🎯 Was heute zu tun ist:*\n{empfehlungen}\n"
+    elif not kpi_lines:
+        text += "_Keine Meta KPI-Daten verfügbar — Token prüfen._\n"
 
     await context.bot.send_message(chat_id=CHAT_ID, text=text, parse_mode="Markdown")
 
 
 async def send_weekly_report(context):
-    if settings.is_paused():
-        logger.info("Wochenbericht übersprungen — Pause aktiv")
-        return
     if not settings.get("schedule.weekly_report_enabled", True):
         return
 
@@ -699,9 +730,6 @@ async def _error_handler(update, context) -> None:
     # Conflict tritt kurz beim Deploy auf wenn zwei Instanzen laufen — kein echter Fehler
     if "Conflict" in err_str and "getUpdates" in err_str:
         logger.warning(f"Bot-Konflikt (Deploy-Artefakt, ignoriert): {err}")
-        return
-    if settings.is_paused():
-        logger.error(f"Bot-Fehler (Pause aktiv, still): {err}")
         return
     logger.error(f"Bot-Fehler: {err}", exc_info=err)
     try:
@@ -1090,10 +1118,7 @@ def main():
             send_weekly_report, "cron",
             args=[application], day_of_week="mon", hour=9, minute=0, id="weekly_report"
         )
-        scheduler.add_job(
-            run_onedrive_sync, "interval",
-            args=[application], minutes=15, id="onedrive_sync"
-        )
+        # Auto-Upload deaktiviert — Videos werden manuell hochgeladen
         # Weekly Review jeden Montag 08:00 UTC
         scheduler.add_job(
             _run_weekly_review_job, "cron",
