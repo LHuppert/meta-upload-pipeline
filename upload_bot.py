@@ -169,6 +169,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status — Aktueller Stand\n"
         "/health — Account Health\n"
         "/report — Sofort-Bericht\n\n"
+        "*Ad-Texte:*\n"
+        "/videos — Alle Google Drive Videos anzeigen\n"
+        "/texte [Nr] — Ad-Texte für Video generieren\n\n"
         "*Steuerung:*\n"
         "/pause [Grund] — Uploads pausieren\n"
         "/fortsetzen — Pause aufheben\n"
@@ -803,6 +806,119 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await run_onedrive_sync(context.application)
 
 
+# ─── Google Drive Video-Liste & Ad-Texte ──────────────────────────────────────
+
+# Gecachte Video-Liste (wird bei /videos neu geladen)
+_gdrive_cache: list = []
+
+
+async def cmd_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Zeigt alle Videos in Google Drive mit Nummern."""
+    global _gdrive_cache
+    if update.message.chat_id != CHAT_ID:
+        return
+    await update.message.reply_text("☁️ Lade Video-Liste aus Google Drive...")
+    try:
+        from gdrive_sync import list_drive_files
+        import os as _os
+        folder_ids = _os.getenv("GOOGLE_DRIVE_FOLDER_IDS", "").split(",")
+        all_files = []
+        for fid in folder_ids:
+            fid = fid.strip()
+            if fid:
+                all_files.extend(list_drive_files(fid))
+        video_files = [f for f in all_files if "video" in f.get("mimeType", "").lower()
+                       or f.get("name", "").lower().endswith((".mp4", ".mov", ".avi"))]
+        if not video_files:
+            await update.message.reply_text("❌ Keine Videos in Google Drive gefunden.")
+            return
+        _gdrive_cache = video_files
+        lines = ["📁 *Videos in Google Drive:*\n"]
+        for i, f in enumerate(video_files, 1):
+            size_mb = int(f.get("size", 0)) / 1024 / 1024
+            lines.append(f"{i}. `{f['name']}` ({size_mb:.0f} MB)")
+        lines.append("\n✍️ Tippe `/texte [Nummer]` für Ad-Texte\nBeispiel: `/texte 3`")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Fehler: {e}")
+
+
+async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ad-Texte für ein Google Drive Video generieren.
+    Ohne Argument: zeigt Video-Liste.
+    Mit Nummer: generiert Texte für Video #N.
+    """
+    global _gdrive_cache
+    if update.message.chat_id != CHAT_ID:
+        return
+
+    args = context.args
+
+    # Kein Argument → Video-Liste anzeigen
+    if not args:
+        await cmd_videos(update, context)
+        return
+
+    # Nummer angegeben
+    try:
+        nr = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Bitte eine Nummer angeben. Beispiel: `/texte 3`", parse_mode="Markdown")
+        return
+
+    # Liste neu laden falls Cache leer
+    if not _gdrive_cache:
+        await update.message.reply_text("🔄 Lade Video-Liste...")
+        try:
+            from gdrive_sync import list_drive_files
+            import os as _os
+            folder_ids = _os.getenv("GOOGLE_DRIVE_FOLDER_IDS", "").split(",")
+            all_files = []
+            for fid in folder_ids:
+                fid = fid.strip()
+                if fid:
+                    all_files.extend(list_drive_files(fid))
+            _gdrive_cache = [f for f in all_files if "video" in f.get("mimeType", "").lower()
+                             or f.get("name", "").lower().endswith((".mp4", ".mov", ".avi"))]
+        except Exception as e:
+            await update.message.reply_text(f"❌ Fehler beim Laden der Liste: {e}")
+            return
+
+    if nr < 1 or nr > len(_gdrive_cache):
+        await update.message.reply_text(
+            f"❌ Ungültige Nummer. Bitte zwischen 1 und {len(_gdrive_cache)} wählen.\n"
+            f"Nutze /videos für die aktuelle Liste."
+        )
+        return
+
+    video = _gdrive_cache[nr - 1]
+    video_name = video.get("name", f"video_{nr}.mp4")
+    size_mb = int(video.get("size", 0)) / 1024 / 1024
+
+    await update.message.reply_text(
+        f"🤖 Generiere Ad-Texte für:\n`{video_name}`...",
+        parse_mode="Markdown"
+    )
+
+    try:
+        from text_generator import generate_ad_texts
+        texts = generate_ad_texts(video_name)
+        msg = (
+            f"✍️ *Ad-Texte für Video {nr}*\n\n"
+            f"📁 `{video_name}`\n"
+            f"📦 {size_mb:.0f} MB\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"*📢 Primary Text:*\n{texts.get('primary_text', '—')}\n\n"
+            f"*🏷️ Headline:*\n{texts.get('headline', '—')}\n\n"
+            f"*📝 Description:*\n{texts.get('description', '—')}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 Texte kopieren und in Meta Ads Manager einfügen."
+        )
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Fehler bei Textgenerierung: {e}")
+
+
 async def cmd_testupload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Zeigt Textvorschau für ein zufälliges OneDrive-Video — ohne Upload."""
     if update.message.chat_id != CHAT_ID:
@@ -914,6 +1030,8 @@ def main():
     app.add_handler(CommandHandler("queue",        cmd_queue))
     app.add_handler(CommandHandler("sync",         cmd_sync))
     app.add_handler(CommandHandler("testupload",   cmd_testupload))
+    app.add_handler(CommandHandler("videos",       cmd_videos))
+    app.add_handler(CommandHandler("texte",        cmd_texte))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.VIDEO | filters.Document.VIDEO, handle_video_upload))
     app.add_error_handler(_error_handler)
