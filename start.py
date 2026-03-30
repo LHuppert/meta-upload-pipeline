@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 def run_onedrive_sync():
-    """OneDrive-Sync im Hintergrund — alle 5 Minuten."""
+    """OneDrive + Google Drive Sync im Hintergrund — alle 5 Minuten."""
     try:
         from onedrive_sync import sync_onedrive
-        result = sync_onedrive()
-        if result["downloaded"] > 0:
-            logger.info(f"OneDrive: {result['downloaded']} neue Videos heruntergeladen — starte Upload")
-            # Automatisch hochladen
+        from gdrive_sync import sync_gdrive
+        new_videos = sync_onedrive() + sync_gdrive()
+        if len(new_videos) > 0:
+            logger.info(f"Sync: {len(new_videos)} neue Videos heruntergeladen — starte Upload")
             threading.Thread(target=run_meta_upload, daemon=True).start()
     except Exception as e:
         logger.error(f"OneDrive-Sync Fehler: {e}")
