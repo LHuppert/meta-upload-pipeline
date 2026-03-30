@@ -607,6 +607,9 @@ async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 async def send_daily_report(context):
+    if settings.is_paused():
+        logger.info("Tagesbericht übersprungen — Pause aktiv")
+        return
     if not settings.get("schedule.daily_report_enabled", True):
         return
 
@@ -649,6 +652,9 @@ async def send_daily_report(context):
 
 
 async def send_weekly_report(context):
+    if settings.is_paused():
+        logger.info("Wochenbericht übersprungen — Pause aktiv")
+        return
     if not settings.get("schedule.weekly_report_enabled", True):
         return
 
@@ -693,6 +699,9 @@ async def _error_handler(update, context) -> None:
     # Conflict tritt kurz beim Deploy auf wenn zwei Instanzen laufen — kein echter Fehler
     if "Conflict" in err_str and "getUpdates" in err_str:
         logger.warning(f"Bot-Konflikt (Deploy-Artefakt, ignoriert): {err}")
+        return
+    if settings.is_paused():
+        logger.error(f"Bot-Fehler (Pause aktiv, still): {err}")
         return
     logger.error(f"Bot-Fehler: {err}", exc_info=err)
     try:
