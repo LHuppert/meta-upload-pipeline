@@ -1071,77 +1071,443 @@ def kpi_page():
 
 # ── Ad-Texte Generator ─────────────────────────────────────────────────────────
 
-@app.route("/texte", methods=["GET", "POST"])
+# ── Ad-Setup: Background-Tasks ──────────────────────────────────────────────────
+
+import threading as _threading
+import uuid as _uuid
+
+_analysis_tasks: dict = {}   # task_id -> {"status": "pending"|"done"|"error", "result": ...}
+_gdrive_video_cache: list = []
+_gdrive_cache_lock = _threading.Lock()
+
+
+def _load_gdrive_videos() -> list:
+    """Lädt Video-Liste aus Google Drive (alle Ordner)."""
+    global _gdrive_video_cache
+    try:
+        from gdrive_sync import list_drive_files
+        folder_ids = os.getenv("GOOGLE_DRIVE_FOLDER_IDS", "").split(",")
+        all_files = []
+        for fid in folder_ids:
+            fid = fid.strip()
+            if fid:
+                all_files.extend(list_drive_files(fid))
+        videos = [f for f in all_files
+                  if "video" in f.get("mimeType", "").lower()
+                  or f.get("name", "").lower().endswith((".mp4", ".mov", ".avi", ".mkv"))]
+        with _gdrive_cache_lock:
+            _gdrive_video_cache = videos
+        return videos
+    except Exception as e:
+        logger.error(f"Google Drive Video-Liste Fehler: {e}")
+        return []
+
+
+def _find_video_by_nr(nr: int, videos: list) -> dict | None:
+    import re
+    for f in videos:
+        name = f.get("name", "")
+        m = re.match(r'^0*(\d+)', name)
+        if m and int(m.group(1)) == nr:
+            return f
+    return None
+
+
+def _run_analysis_task(task_id: str, video: dict):
+    """Läuft in Background-Thread: Video herunterladen → analysieren → Ergebnis speichern."""
+    from gdrive_sync import download_drive_file
+    from text_generator import analyze_video_and_generate_setup, generate_full_ad_setup
+    video_name = video.get("name", "video.mp4")
+    try:
+        _analysis_tasks[task_id]["status"] = "downloading"
+        tmp_path = download_drive_file(video)
+        if tmp_path and tmp_path.exists():
+            _analysis_tasks[task_id]["status"] = "analyzing"
+            result = analyze_video_and_generate_setup(str(tmp_path), video_name)
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+        else:
+            _analysis_tasks[task_id]["status"] = "analyzing"
+            result = generate_full_ad_setup(video_name)
+        _analysis_tasks[task_id].update({"status": "done", "result": result, "video_name": video_name,
+                                          "size_mb": int(video.get("size", 0)) / 1024 / 1024})
+    except Exception as e:
+        _analysis_tasks[task_id].update({"status": "error", "error": str(e)})
+
+
+@app.route("/api/videos")
+@login_required
+def api_videos():
+    """Gibt gecachte oder frisch geladene Video-Liste zurück."""
+    refresh = request.args.get("refresh", "0") == "1"
+    with _gdrive_cache_lock:
+        cached = list(_gdrive_video_cache)
+    if not cached or refresh:
+        cached = _load_gdrive_videos()
+    import re
+    result = []
+    for f in cached:
+        name = f.get("name", "")
+        m = re.match(r'^0*(\d+)', name)
+        nr = int(m.group(1)) if m else None
+        result.append({"id": f.get("id"), "name": name,
+                        "nr": nr, "size_mb": round(int(f.get("size", 0)) / 1024 / 1024, 1)})
+    result.sort(key=lambda x: x["nr"] if x["nr"] is not None else 9999)
+    return jsonify({"videos": result, "count": len(result)})
+
+
+@app.route("/api/analyze", methods=["POST"])
+@login_required
+def api_analyze_start():
+    """Startet Analyse-Task für Video-Nummer. Gibt task_id zurück."""
+    data = request.get_json(silent=True) or {}
+    nr = data.get("nr")
+    try:
+        nr = int(nr)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Ungültige Nummer"}), 400
+
+    with _gdrive_cache_lock:
+        cached = list(_gdrive_video_cache)
+    if not cached:
+        cached = _load_gdrive_videos()
+
+    video = _find_video_by_nr(nr, cached)
+    if not video:
+        # Cache leeren und nochmal
+        cached = _load_gdrive_videos()
+        video = _find_video_by_nr(nr, cached)
+    if not video:
+        return jsonify({"error": f"Kein Video mit Nummer {nr} gefunden"}), 404
+
+    task_id = _uuid.uuid4().hex
+    _analysis_tasks[task_id] = {"status": "pending", "nr": nr, "video_name": video.get("name")}
+    t = _threading.Thread(target=_run_analysis_task, args=(task_id, video), daemon=True)
+    t.start()
+    return jsonify({"task_id": task_id, "video_name": video.get("name"),
+                    "size_mb": round(int(video.get("size", 0)) / 1024 / 1024, 1)})
+
+
+@app.route("/api/analyze/<task_id>")
+@login_required
+def api_analyze_status(task_id):
+    """Gibt Status/Ergebnis eines Analyse-Tasks zurück."""
+    task = _analysis_tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Task nicht gefunden"}), 404
+    return jsonify(task)
+
+
+@app.route("/texte")
 @login_required
 def texte_page():
-    result     = None
-    video_name = ""
-    extra_info = ""
+    content = """
+    <style>
+      .video-list{max-height:320px;overflow-y:auto;border:1px solid #e9ecef;border-radius:8px;background:#fff}
+      .video-item{padding:10px 14px;cursor:pointer;border-bottom:1px solid #f5f5f5;display:flex;align-items:center;gap:10px;transition:.15s}
+      .video-item:hover{background:#f0f4ff}
+      .video-item.active{background:#1a1a2e;color:#fff}
+      .video-item .nr{font-weight:700;color:#1a1a2e;min-width:36px;font-size:1.05em}
+      .video-item.active .nr{color:#aab4d4}
+      .video-item .name{font-size:.85em;color:#555;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .video-item.active .name{color:#ccc}
+      .video-item .size{font-size:.75em;color:#999;white-space:nowrap}
+      .copy-field{background:#f8f9fc;border-radius:8px;padding:14px;margin-bottom:10px;border:1px solid #e9ecef}
+      .copy-field .field-label{font-size:.75em;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+      .copy-field .field-value{font-size:.95em;line-height:1.5;color:#222;margin-bottom:8px;word-break:break-word}
+      .copy-btn{padding:4px 12px;font-size:.8em;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;transition:.15s}
+      .copy-btn:hover{background:#1a1a2e;color:#fff;border-color:#1a1a2e}
+      .section-divider{font-size:.75em;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#999;padding:12px 0 6px;border-top:1px solid #eee;margin-top:8px}
+      #result-panel{display:none}
+      #loading-bar{display:none;text-align:center;padding:30px 0;color:#666}
+      .spinner{display:inline-block;width:28px;height:28px;border:3px solid #e9ecef;border-top-color:#1a1a2e;border-radius:50%;animation:spin .8s linear infinite;margin-right:10px;vertical-align:middle}
+      @keyframes spin{to{transform:rotate(360deg)}}
+      .video-inhalt-box{background:#fffbe6;border:1px solid #ffe082;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:.9em;color:#555;line-height:1.6}
+      .tag{display:inline-block;padding:3px 8px;border-radius:4px;font-size:.8em;background:#e3e8ff;color:#1a1a2e;margin:2px}
+    </style>
 
-    if request.method == "POST":
-        video_name = request.form.get("video_name", "").strip()
-        extra_info = request.form.get("extra_info", "").strip()
-        if video_name:
-            result = generate_ad_texts_for_video(video_name, extra_info)
+    <h1 style="font-size:1.4em;margin-bottom:6px">✍️ Ads Manager Setup</h1>
+    <p style="color:#888;font-size:.9em;margin-bottom:20px">Video-Nummer eingeben → Claude analysiert Inhalt → fertige Texte + Kampagnen-Einstellungen</p>
 
-    result_html = ""
-    if result:
-        if result.get("error"):
-            result_html = f'<div class="alert alert-danger">❌ {result["error"]}</div>'
-        else:
-            def copy_field(label, value, field_id):
-                return f"""<div class="card" style="background:#f8f9fc;padding:16px;margin-bottom:12px">
-                  <div style="font-size:.8em;font-weight:600;color:#666;text-transform:uppercase;margin-bottom:8px">{label}</div>
-                  <div style="font-size:1.05em;margin-bottom:10px;line-height:1.5" id="{field_id}">{value}</div>
-                  <button onclick="navigator.clipboard.writeText(document.getElementById('{field_id}').innerText);this.textContent='✅ Kopiert!';setTimeout(()=>this.textContent='📋 Kopieren',2000)"
-                    class="btn btn-sm" style="background:#e9ecef">📋 Kopieren</button>
-                </div>"""
+    <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:20px;align-items:start">
 
-            result_html = f"""
-            <div class="card" style="margin-top:20px;border:2px solid #28a745">
-              <h2 style="color:#28a745;margin-bottom:16px">✅ Ad-Texte generiert</h2>
-              {copy_field("Primary Text (Haupttext)", result.get("primary_text",""), "pt")}
-              {copy_field("Headline (Überschrift)", result.get("headline",""), "hl")}
-              {copy_field("Description", result.get("description",""), "desc")}
-              {copy_field("Call-to-Action", result.get("cta", "SHOP_NOW"), "cta")}
-            </div>"""
-
-    content = f"""
-    <h1 style="font-size:1.4em;margin-bottom:20px">✍️ Ad-Texte Generator</h1>
-    <div class="card">
-      <h2>Video-Informationen eingeben</h2>
-      <p style="color:#666;font-size:.9em;margin-bottom:16px">
-        Gib den Video-Namen oder eine kurze Beschreibung ein — Claude generiert sofort passende Meta Ad Texte.
-        Du kannst die Texte dann direkt in Meta Ads Manager einfügen.
-      </p>
-      <form method="POST">
-        <div class="field">
-          <label>Video-Name / Titel *</label>
-          <input type="text" name="video_name" value="{video_name}"
-            placeholder="z.B. Weinlese_Herbst_2025.mp4 oder Rotwein Spätburgunder Vorstellung"
-            style="width:100%;max-width:600px" required>
+      <!-- Linke Spalte: Input + Video-Liste -->
+      <div>
+        <div class="card" style="padding:18px">
+          <div style="display:flex;gap:10px;margin-bottom:16px">
+            <input type="number" id="nr-input" placeholder="Nr. eingeben (z.B. 42)"
+              style="flex:1;padding:10px 14px;border:2px solid #1a1a2e;border-radius:8px;font-size:1.1em;font-weight:600"
+              min="1" max="999">
+            <button onclick="analyzeNr()" class="btn btn-primary" style="padding:10px 18px;font-size:1em">
+              🔍 Analysieren
+            </button>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:.8em;color:#888" id="video-count">Lade Videos...</span>
+            <button onclick="loadVideos(true)" class="btn btn-sm" style="background:#e9ecef;font-size:.75em">↺ Aktualisieren</button>
+          </div>
+          <div class="video-list" id="video-list">
+            <div style="padding:20px;text-align:center;color:#aaa;font-size:.9em">Wird geladen...</div>
+          </div>
         </div>
-        <div class="field">
-          <label>Zusatzinfos (optional)</label>
-          <input type="text" name="extra_info" value="{extra_info}"
-            placeholder="z.B. Spätburgunder 2023, Angebot 10% Rabatt, für Instagram Reels"
-            style="width:100%;max-width:600px">
+      </div>
+
+      <!-- Rechte Spalte: Ergebnis -->
+      <div>
+        <div class="card" id="placeholder-panel" style="padding:30px;text-align:center;color:#aaa">
+          <div style="font-size:2em;margin-bottom:10px">🍷</div>
+          <div>Video-Nummer links eingeben<br>oder Video aus der Liste wählen</div>
         </div>
-        <button type="submit" class="btn btn-primary">🤖 Texte generieren</button>
-      </form>
+
+        <div id="loading-bar" class="card" style="padding:30px;text-align:center">
+          <div><span class="spinner"></span> <span id="loading-text">Lade Video...</span></div>
+          <div style="font-size:.85em;color:#aaa;margin-top:8px" id="loading-file"></div>
+        </div>
+
+        <div id="result-panel" class="card" style="padding:18px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div>
+              <strong id="res-nr" style="font-size:1.1em"></strong>
+              <span id="res-filename" style="font-size:.85em;color:#888;margin-left:8px"></span>
+            </div>
+            <button onclick="copyAll()" class="btn btn-sm btn-success">📋 Alles kopieren</button>
+          </div>
+
+          <div id="video-inhalt-wrap" style="display:none">
+            <div class="video-inhalt-box" id="res-video-inhalt"></div>
+          </div>
+
+          <div class="section-divider">📢 Ad Texte</div>
+          <div class="copy-field">
+            <div class="field-label">Primary Text <span style="color:#aaa;font-weight:400">(max. 125 Zeichen)</span></div>
+            <div class="field-value" id="res-primary-text"></div>
+            <button class="copy-btn" onclick="copyField('res-primary-text',this)">📋 Kopieren</button>
+          </div>
+          <div class="copy-field">
+            <div class="field-label">Headline <span style="color:#aaa;font-weight:400">(max. 40 Zeichen)</span></div>
+            <div class="field-value" id="res-headline"></div>
+            <button class="copy-btn" onclick="copyField('res-headline',this)">📋 Kopieren</button>
+          </div>
+          <div class="copy-field">
+            <div class="field-label">Description <span style="color:#aaa;font-weight:400">(max. 30 Zeichen)</span></div>
+            <div class="field-value" id="res-description"></div>
+            <button class="copy-btn" onclick="copyField('res-description',this)">📋 Kopieren</button>
+          </div>
+          <div class="copy-field">
+            <div class="field-label">CTA Button</div>
+            <div class="field-value" id="res-cta"></div>
+            <button class="copy-btn" onclick="copyField('res-cta',this)">📋 Kopieren</button>
+          </div>
+
+          <div class="section-divider">🎯 Kampagne</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px">
+            <div class="copy-field" style="margin-bottom:0">
+              <div class="field-label">Kampagnenziel</div>
+              <div class="field-value" id="res-ziel"></div>
+            </div>
+            <div class="copy-field" style="margin-bottom:0">
+              <div class="field-label">Optimierungsziel</div>
+              <div class="field-value" id="res-opt"></div>
+            </div>
+            <div class="copy-field" style="margin-bottom:0">
+              <div class="field-label">Gebotstrategie</div>
+              <div class="field-value" id="res-gebot"></div>
+            </div>
+            <div class="copy-field" style="margin-bottom:0">
+              <div class="field-label">Budget / Tag</div>
+              <div class="field-value" id="res-budget"></div>
+            </div>
+          </div>
+          <div class="copy-field" style="margin-top:8px">
+            <div class="field-label">Laufzeit-Empfehlung</div>
+            <div class="field-value" id="res-laufzeit"></div>
+          </div>
+
+          <div class="section-divider">👥 Zielgruppe</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="copy-field" style="margin-bottom:0">
+              <div class="field-label">Alter</div>
+              <div class="field-value" id="res-alter"></div>
+            </div>
+            <div class="copy-field" style="margin-bottom:0">
+              <div class="field-label">Geschlecht</div>
+              <div class="field-value" id="res-geschlecht"></div>
+            </div>
+          </div>
+          <div class="copy-field" style="margin-top:8px">
+            <div class="field-label">Standort</div>
+            <div class="field-value" id="res-standort"></div>
+          </div>
+          <div class="copy-field">
+            <div class="field-label">Interessen</div>
+            <div id="res-interessen"></div>
+          </div>
+
+          <div class="section-divider">📱 Placements</div>
+          <div id="res-placements" style="padding:4px 0 8px"></div>
+
+          <div class="section-divider">💬 Hinweis</div>
+          <div class="copy-field">
+            <div class="field-value" id="res-hinweis"></div>
+          </div>
+        </div>
+      </div>
     </div>
-    {result_html}
-    <div class="card" style="margin-top:20px;background:#fff8e1;border:1px solid #ffe082">
-      <h2 style="color:#856404">💡 So verwendest du die Texte</h2>
-      <ol style="margin-left:20px;line-height:2;color:#666;font-size:.9em">
-        <li>Video in <strong>Meta Ads Manager</strong> hochladen</li>
-        <li>Neue Anzeige erstellen → Video auswählen</li>
-        <li><strong>Primary Text</strong> in das Textfeld einfügen</li>
-        <li><strong>Headline</strong> in die Überschrift</li>
-        <li><strong>Description</strong> in die Beschreibung</li>
-        <li>Call-to-Action Button auswählen (z.B. "Jetzt einkaufen")</li>
-      </ol>
-    </div>
+
+    <script>
+    let currentTaskId = null;
+    let pollInterval  = null;
+
+    // ── Video-Liste laden ──────────────────────────────────────────────────────
+    function loadVideos(refresh) {
+      const url = '/api/videos' + (refresh ? '?refresh=1' : '');
+      fetch(url).then(r => r.json()).then(data => {
+        const list = document.getElementById('video-list');
+        const cnt  = document.getElementById('video-count');
+        cnt.textContent = data.count + ' Videos in Google Drive';
+        if (!data.videos || !data.videos.length) {
+          list.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa">Keine Videos gefunden</div>';
+          return;
+        }
+        list.innerHTML = data.videos.map(v =>
+          `<div class="video-item" onclick="selectVideo(${v.nr}, this)" data-nr="${v.nr}">
+             <span class="nr">${v.nr}</span>
+             <span class="name">${v.name}</span>
+             <span class="size">${v.size_mb} MB</span>
+           </div>`
+        ).join('');
+      }).catch(e => {
+        document.getElementById('video-list').innerHTML =
+          '<div style="padding:16px;color:#dc3545;font-size:.85em">Fehler beim Laden: ' + e + '</div>';
+      });
+    }
+
+    function selectVideo(nr, el) {
+      document.querySelectorAll('.video-item').forEach(i => i.classList.remove('active'));
+      if (el) el.classList.add('active');
+      document.getElementById('nr-input').value = nr;
+      analyzeNr();
+    }
+
+    function analyzeNr() {
+      const nr = parseInt(document.getElementById('nr-input').value);
+      if (!nr || nr < 1) return;
+
+      // UI: Loading anzeigen
+      document.getElementById('placeholder-panel').style.display = 'none';
+      document.getElementById('result-panel').style.display       = 'none';
+      document.getElementById('loading-bar').style.display        = 'flex';
+      document.getElementById('loading-bar').style.flexDirection  = 'column';
+      document.getElementById('loading-text').textContent = 'Starte Download...';
+      document.getElementById('loading-file').textContent = '';
+
+      if (pollInterval) clearInterval(pollInterval);
+
+      fetch('/api/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nr: nr})
+      }).then(r => r.json()).then(data => {
+        if (data.error) { showError(data.error); return; }
+        currentTaskId = data.task_id;
+        document.getElementById('loading-file').textContent =
+          data.video_name + ' (' + data.size_mb.toFixed(0) + ' MB)';
+        pollInterval = setInterval(pollTask, 2000);
+      }).catch(e => showError(String(e)));
+    }
+
+    function pollTask() {
+      if (!currentTaskId) return;
+      fetch('/api/analyze/' + currentTaskId).then(r => r.json()).then(data => {
+        const txt = document.getElementById('loading-text');
+        if (data.status === 'downloading') txt.textContent = 'Lade Video herunter...';
+        else if (data.status === 'analyzing') txt.textContent = '🤖 Claude analysiert Video-Inhalt...';
+        else if (data.status === 'done') {
+          clearInterval(pollInterval);
+          showResult(data);
+        } else if (data.status === 'error') {
+          clearInterval(pollInterval);
+          showError(data.error || 'Unbekannter Fehler');
+        }
+      }).catch(() => {});
+    }
+
+    function showResult(data) {
+      document.getElementById('loading-bar').style.display  = 'none';
+      document.getElementById('result-panel').style.display = 'block';
+      const s = data.result || {};
+      document.getElementById('res-nr').textContent       = 'Nr. ' + (data.nr || '');
+      document.getElementById('res-filename').textContent = data.video_name || '';
+
+      const vi = s.video_inhalt || '';
+      if (vi) {
+        document.getElementById('video-inhalt-wrap').style.display = 'block';
+        document.getElementById('res-video-inhalt').textContent = vi;
+      } else {
+        document.getElementById('video-inhalt-wrap').style.display = 'none';
+      }
+
+      set('res-primary-text', s.primary_text);
+      set('res-headline',     s.headline);
+      set('res-description',  s.description);
+      set('res-cta',          s.cta);
+      set('res-ziel',         s.kampagnenziel);
+      set('res-opt',          s.optimierungsziel);
+      set('res-gebot',        s.gebotstrategie);
+      set('res-budget',       s.tagesbudget_eur ? s.tagesbudget_eur + ' EUR' : '—');
+      set('res-laufzeit',     s.laufzeit_empfehlung);
+      set('res-alter',        s.zielgruppe_alter);
+      set('res-geschlecht',   s.zielgruppe_geschlecht);
+      set('res-standort',     s.zielgruppe_standort);
+      set('res-hinweis',      s.hinweis);
+
+      const interessen = s.zielgruppe_interessen || [];
+      document.getElementById('res-interessen').innerHTML =
+        interessen.map(i => `<span class="tag">${i}</span>`).join('') || '—';
+
+      const placements = s.placements || [];
+      document.getElementById('res-placements').innerHTML =
+        placements.map(p => `<span class="tag">📱 ${p}</span>`).join('') || '—';
+    }
+
+    function showError(msg) {
+      document.getElementById('loading-bar').style.display  = 'none';
+      document.getElementById('placeholder-panel').style.display = 'block';
+      document.getElementById('placeholder-panel').innerHTML =
+        '<div style="color:#dc3545;font-size:.9em">❌ ' + msg + '</div>';
+    }
+
+    function set(id, val) {
+      document.getElementById(id).textContent = val || '—';
+    }
+
+    function copyField(id, btn) {
+      const val = document.getElementById(id).textContent;
+      navigator.clipboard.writeText(val).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✅ Kopiert!';
+        btn.style.background = '#28a745'; btn.style.color = '#fff';
+        setTimeout(() => { btn.textContent = orig; btn.style.background = ''; btn.style.color = ''; }, 2000);
+      });
+    }
+
+    function copyAll() {
+      const fields = ['primary_text','headline','description','cta'];
+      const ids    = ['res-primary-text','res-headline','res-description','res-cta'];
+      const labels = ['Primary Text','Headline','Description','CTA'];
+      let text = '';
+      ids.forEach((id,i) => { text += labels[i] + ':\\n' + document.getElementById(id).textContent + '\\n\\n'; });
+      navigator.clipboard.writeText(text.trim()).then(() => alert('✅ Alle Texte kopiert!'));
+    }
+
+    // Enter-Taste im Nummer-Input
+    document.getElementById('nr-input').addEventListener('keydown', e => { if (e.key === 'Enter') analyzeNr(); });
+
+    // Videos beim Laden der Seite abrufen
+    loadVideos(false);
+    </script>
     """
     return render_page(content, active="texte")
 
