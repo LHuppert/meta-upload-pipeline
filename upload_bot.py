@@ -931,9 +931,10 @@ async def cmd_texte(update: Update, context: ContextTypes.DEFAULT_TYPE):
         video = None
         for f in _gdrive_cache:
             name = f.get("name", "")
-            prefix = name.split("_")[0].split(" ")[0].split("-")[0].strip()
+            import re as _re
+            m = _re.match(r'^0*(\d+)', name)
             try:
-                if int(prefix) == nr:
+                if m and int(m.group(1)) == nr:
                     video = f
                     break
             except ValueError:
