@@ -1113,6 +1113,26 @@ def _find_video_by_nr(nr: int, videos: list) -> dict | None:
     return None
 
 
+def _extract_hook_type(filename: str) -> str:
+    """Extrahiert den Hook-Typ aus dem Dateinamen.
+    Format: 001_H10_MCAT_04_CTA_5.mp4 → 'H10'
+    Gibt '' zurück wenn kein Hook-Typ gefunden.
+    """
+    import re
+    # Suche nach H01-H99 Muster im Dateinamen
+    m = re.search(r'_(H\d{2})_', filename, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    # Fallback: suche ohne führende Null
+    m = re.search(r'_(H\d+)_', filename, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    return ""
+
+
+CAMPAIGN_NAME = "Testing Inhouse"
+
+
 def _run_analysis_task(task_id: str, video: dict):
     """Läuft in Background-Thread: Video herunterladen → analysieren → Ergebnis speichern."""
     from gdrive_sync import download_drive_file
@@ -1182,12 +1202,21 @@ def api_analyze_start():
     if not video:
         return jsonify({"error": f"Kein Video mit Nummer {nr} gefunden"}), 404
 
+    hook_type = _extract_hook_type(video.get("name", ""))
     task_id = _uuid.uuid4().hex
-    _analysis_tasks[task_id] = {"status": "pending", "nr": nr, "video_name": video.get("name")}
+    _analysis_tasks[task_id] = {
+        "status":     "pending",
+        "nr":         nr,
+        "video_name": video.get("name"),
+        "hook_type":  hook_type,
+        "kampagne":   CAMPAIGN_NAME,
+        "adset":      hook_type if hook_type else "Unbekannt",
+    }
     t = _threading.Thread(target=_run_analysis_task, args=(task_id, video), daemon=True)
     t.start()
     return jsonify({"task_id": task_id, "video_name": video.get("name"),
-                    "size_mb": round(int(video.get("size", 0)) / 1024 / 1024, 1)})
+                    "size_mb": round(int(video.get("size", 0)) / 1024 / 1024, 1),
+                    "hook_type": hook_type})
 
 
 @app.route("/api/analyze/<task_id>")
@@ -1277,6 +1306,23 @@ def texte_page():
 
           <div id="video-inhalt-wrap" style="display:none">
             <div class="video-inhalt-box" id="res-video-inhalt"></div>
+          </div>
+
+          <div class="section-divider">🗂️ Kampagnen-Struktur (Meta Ads Manager)</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px">
+            <div class="copy-field" style="margin-bottom:0;border-left:3px solid #1a1a2e">
+              <div class="field-label">Kampagne</div>
+              <div class="field-value" id="res-kampagne" style="font-weight:700;color:#1a1a2e"></div>
+              <button class="copy-btn" onclick="copyField('res-kampagne',this)">📋 Kopieren</button>
+            </div>
+            <div class="copy-field" style="margin-bottom:0;border-left:3px solid #4361ee">
+              <div class="field-label">Anzeigengruppe (Ad Set)</div>
+              <div class="field-value" id="res-adset" style="font-weight:700;color:#4361ee;font-size:1.1em"></div>
+              <button class="copy-btn" onclick="copyField('res-adset',this)">📋 Kopieren</button>
+            </div>
+          </div>
+          <div style="background:#f0f4ff;border:1px solid #c7d2fe;border-radius:6px;padding:8px 12px;font-size:.8em;color:#555;margin-bottom:8px">
+            ℹ️ Jede Anzeigengruppe entspricht einem Hook-Typ. Alle Videos mit gleichem Hook (z.B. H10) kommen in dieselbe Gruppe.
           </div>
 
           <div class="section-divider">📢 Ad Texte</div>
@@ -1441,6 +1487,12 @@ def texte_page():
       document.getElementById('res-nr').textContent       = 'Nr. ' + (data.nr || '');
       document.getElementById('res-filename').textContent = data.video_name || '';
 
+      // Kampagnen-Struktur aus Task-Daten (nicht aus Claude-Result)
+      set('res-kampagne', data.kampagne || 'Testing Inhouse');
+      const hookType = data.hook_type || '';
+      document.getElementById('res-adset').textContent =
+        hookType ? hookType + ' — ' + hookHumanLabel(hookType) : '—';
+
       const vi = s.video_inhalt || '';
       if (vi) {
         document.getElementById('video-inhalt-wrap').style.display = 'block';
@@ -1483,6 +1535,23 @@ def texte_page():
       document.getElementById(id).textContent = val || '—';
     }
 
+    function hookHumanLabel(hook) {
+      // Lesbare Bezeichnung pro Hook-Typ (Wein-Kontext)
+      const labels = {
+        'H01': 'Hook 1 (Produkt-Fokus)',
+        'H02': 'Hook 2 (Story/Emotion)',
+        'H03': 'Hook 3 (Frage/Problem)',
+        'H04': 'Hook 4 (Angebot/Preis)',
+        'H05': 'Hook 5 (Social Proof)',
+        'H06': 'Hook 6 (Herkunft/Region)',
+        'H07': 'Hook 7 (Lifestyle)',
+        'H08': 'Hook 8 (Saison/Anlass)',
+        'H09': 'Hook 9 (Direktansprache)',
+        'H10': 'Hook 10 (CTA-First)',
+      };
+      return labels[hook] || hook;
+    }
+
     function copyField(id, btn) {
       const val = document.getElementById(id).textContent;
       navigator.clipboard.writeText(val).then(() => {
@@ -1494,12 +1563,13 @@ def texte_page():
     }
 
     function copyAll() {
-      const fields = ['primary_text','headline','description','cta'];
+      const kampagne = document.getElementById('res-kampagne').textContent;
+      const adset    = document.getElementById('res-adset').textContent;
       const ids    = ['res-primary-text','res-headline','res-description','res-cta'];
       const labels = ['Primary Text','Headline','Description','CTA'];
-      let text = '';
+      let text = '=== KAMPAGNEN-STRUKTUR ===\\nKampagne: ' + kampagne + '\\nAnzeigengruppe: ' + adset + '\\n\\n=== AD TEXTE ===\\n';
       ids.forEach((id,i) => { text += labels[i] + ':\\n' + document.getElementById(id).textContent + '\\n\\n'; });
-      navigator.clipboard.writeText(text.trim()).then(() => alert('✅ Alle Texte kopiert!'));
+      navigator.clipboard.writeText(text.trim()).then(() => alert('✅ Alles kopiert (Kampagne + Texte)!'));
     }
 
     // Enter-Taste im Nummer-Input

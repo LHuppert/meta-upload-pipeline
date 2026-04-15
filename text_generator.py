@@ -12,10 +12,47 @@ logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-BRAND_CONTEXT = """Du arbeitest fuer Weingut Huppert aus Gundersheim, Rheinhessen (Deutschland).
-Das Weingut produziert hochwertige Weine und erstellt Videoanzeigen fuer Meta Ads (Facebook/Instagram).
-Zielgruppe: Weinliebhaber und Genussmenschen im deutschsprachigen Raum.
-Ton: authentisch, warm, einladend.
+BRAND_CONTEXT = """Du schreibst Meta Ads fuer Weingut Terra Preta Huppert aus Gundersheim, Rheinhessen.
+
+MARKENIDENTITAET:
+Ein familiengefuehrtes Weingut mit klarer Haltung: Terra Preta, geschlossene Kreislaeufe, echte Nachhaltigkeit, charakterstarke Weine, keine Massenware.
+
+DER KERN-USP: TERRA PRETA
+Aus Rebschnitt wird Pflanzenkohle. Aus Pflanzenkohle und Kompost wird Terra Preta (Schwarzerde). Aus gesunden Boeden werden Weine mit mehr Tiefe und Charakter.
+Terra Preta muss IMMER konkret sein: Pflanzenkohle, Rebschnitt, Kompost, Kreislauf, Bodenleben, Wasserhaltefahigkeit, CO2-Bindung.
+Nie als Deko-Begriff verwenden — immer Wirkung nennen.
+
+TONALIT AET:
+- Direkt, ehrlich, greifbar, selbstbewusst, manchmal provokant — aber nicht arrogant
+- Praegnant und merkfahig — kurze klare Saetze, starke Kontraste
+- Nach Arbeit und Substanz, nicht nach Werbeagentur
+- Nachhaltigkeit und Geschmack/Charakter immer zusammen denken
+
+LIEBLINGSFORMULIERUNGEN:
+- "Keine Massenware. Kein Greenwashing."
+- "Schwarze Erde, goldener Wein."
+- "Mit Haltung gemacht."
+- "Das ist kein normaler Wein."
+- "Nachhaltigkeit ist fuer uns kein Zusatz, sondern Teil des Geschmacks."
+
+VERBOTEN:
+- Generisches Weinmarketing ohne Terra-Preta-Bezug
+- Greenwashing-Floskeln: "umweltfreundlich", "naturnah", "bewusst geniessen" ohne konkreten Bezug
+- Luxusworte ohne Substanz: "exquisit", "raffiniert", "edle Komposition"
+- Weiche Formulierungen: "wir versuchen", "wir moechten", "wir glauben"
+- "Mit Liebe gemacht" ohne Spezifisches dahinter
+- Moralischer Zeigefinger ohne Produktnutzen
+- Romantische Naturbilder ohne konkrete Substanz
+- Bio, biodynamisch, organic, Demeter, Bioland (nicht zertifiziert!)
+
+FUER META ADS/HOOKS gilt besonders:
+Aufmerksamkeit in 1-2 Saetzen: provokant, kurz, kontrastreich, klarer Nutzen ODER starke Haltung.
+Besser schwach/stark-Beispiele:
+SCHWACH: "Wir setzen auf Nachhaltigkeit und achten auf einen verantwortungsvollen Umgang mit der Natur."
+STARK: "Aus altem Rebschnitt machen wir Pflanzenkohle — fuer Boeden, die mehr koennen, und Weine, die mehr zeigen."
+SCHWACH: "Unsere Weine stehen fuer Qualitaet und Genuss."
+STARK: "Keine Massenware. Kein Greenwashing. Weine mit Haltung, Tiefe und eigener Handschrift."
+
 Sprache: Deutsch."""
 
 
@@ -26,17 +63,22 @@ def generate_ad_texts(video_filename: str, extra_context: str = "") -> dict:
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        prompt = f"""Erstelle Meta Ad Texte fuer ein Weingut-Video.
+        import re as _re
+        hook_match = _re.search(r'H(\d+)', video_filename, _re.IGNORECASE)
+        hook_info = f"Hook-Typ H{hook_match.group(1)}" if hook_match else ""
+
+        prompt = f"""Erstelle Meta Ad Texte fuer ein Werbevideo von Terra Preta Weingut Huppert.
 Dateiname: {video_filename}
+{f"Hook-Typ: {hook_info}" if hook_info else ""}
 {f"Zusatzinfo: {extra_context}" if extra_context else ""}
 
-Erstelle exakt diese 3 Felder:
-- primary_text: Haupttext (1-2 Saetze, max. 125 Zeichen)
-- headline: Ueberschrift (max. 40 Zeichen)
-- description: Kurzbeschreibung (max. 30 Zeichen)
+Pflichtanforderungen:
+- Terra Preta, Pflanzenkohle ODER Kreislauf muss konkret vorkommen
+- Kein generisches Weinmarketing (keine leeren Qualitaets- oder Genuss-Phrasen)
+- Kurze, kontrastreiche Saetze — Hook-Logik, kein Loblied
 
 Antworte NUR mit diesem JSON (kein Markdown):
-{{"primary_text": "...", "headline": "...", "description": "..."}}"""
+{{"primary_text": "max. 125 Zeichen, provokant und direkt", "headline": "max. 40 Zeichen, praegnant", "description": "max. 30 Zeichen"}}"""
 
         response = client.messages.create(
             model="claude-opus-4-6",
@@ -88,27 +130,39 @@ def generate_full_ad_setup(video_filename: str, extra_context: str = "") -> dict
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        prompt = f"""Du erstellst ein komplettes Meta Ads Setup fuer Weingut Huppert (Gundersheim, Rheinhessen).
+        import re as _re
+        hook_match = _re.search(r'H(\d+)', video_filename, _re.IGNORECASE)
+        hook_info = f"Hook-Typ H{hook_match.group(1)}" if hook_match else ""
+
+        prompt = f"""Du erstellst ein komplettes Meta Ads Setup fuer Terra Preta Weingut Huppert (Gundersheim, Rheinhessen).
 Video: {video_filename}
+{f"Hook-Typ: {hook_info}" if hook_info else ""}
 {f"Zusatzinfo: {extra_context}" if extra_context else ""}
+
+PFLICHT fuer primary_text und headline:
+- Terra Preta, Pflanzenkohle, Kreislauf oder Bodenleben MUSS konkret benannt werden
+- Kein generisches Weinmarketing — kein "Qualitaet", "Genuss", "fuer jeden Anlass"
+- Ton: direkt, kantig, selbstbewusst — nach Marke, nicht nach Agentur
+- Kontraste nutzen: "Keine Massenware.", "Schwarze Erde, goldener Wein.", "Mit Haltung gemacht."
+- Nachhaltigkeit und Weincharakter zusammen denken
 
 Antworte NUR mit diesem JSON (kein Markdown, keine Erklaerung):
 {{
-  "primary_text": "Haupttext max. 125 Zeichen, 1-2 Saetze, einladend",
-  "headline": "Ueberschrift max. 40 Zeichen",
-  "description": "Kurzbeschreibung max. 30 Zeichen",
+  "primary_text": "max. 125 Zeichen, provokant/direkt, Terra-Preta-Bezug zwingend",
+  "headline": "max. 40 Zeichen, praegnant und merkfaehig",
+  "description": "max. 30 Zeichen",
   "cta": "SHOP_NOW oder LEARN_MORE oder WATCH_MORE",
-  "kampagnenziel": "z.B. VIDEO_VIEWS oder CONVERSIONS oder REACH - passendes Ziel fuer Weingut-Video",
-  "zielgruppe_alter": "z.B. 30-65",
-  "zielgruppe_geschlecht": "ALL oder MALE oder FEMALE",
-  "zielgruppe_interessen": ["Wein", "Genuss", "..."],
-  "zielgruppe_standort": "Deutschland, Oesterreich, Schweiz",
-  "placements": ["Facebook Feed", "Instagram Feed", "Instagram Reels", "Stories"],
-  "optimierungsziel": "z.B. THRUPLAY oder LINK_CLICKS oder IMPRESSIONS",
-  "gebotstrategie": "LOWEST_COST oder COST_CAP",
+  "kampagnenziel": "VIDEO_VIEWS oder CONVERSIONS oder REACH",
+  "zielgruppe_alter": "30-65",
+  "zielgruppe_geschlecht": "ALL",
+  "zielgruppe_interessen": ["Wein", "Nachhaltigkeit", "Genuss", "Rheinhessen"],
+  "zielgruppe_standort": "Deutschland (Geo-Ausschluss: 40km um PLZ 67598)",
+  "placements": ["Facebook Feed", "Instagram Reels", "Stories"],
+  "optimierungsziel": "THRUPLAY oder LINK_CLICKS",
+  "gebotstrategie": "LOWEST_COST",
   "tagesbudget_eur": 5,
-  "laufzeit_empfehlung": "z.B. 7 Tage testen",
-  "hinweis": "1 kurzer Hinweis was bei diesem Video-Typ besonders wichtig ist"
+  "laufzeit_empfehlung": "7 Tage testen",
+  "hinweis": "Konkreter Tipp fuer diesen Video-Typ — was macht ihn wirkungsvoll oder wo liegt das Risiko"
 }}"""
         response = client.messages.create(
             model="claude-opus-4-6",
@@ -237,31 +291,43 @@ def analyze_video_and_generate_setup(video_path: str, video_name: str) -> dict:
 
     transcript_block = f"\n\nGesprochener Text im Video (Transkript):\n\"{transcript}\"" if transcript else ""
 
+    import re as _re2
+    hook_match2 = _re2.search(r'H(\d+)', video_name, _re2.IGNORECASE)
+    hook_info2 = f"Hook-Typ H{hook_match2.group(1)}" if hook_match2 else ""
+
     content.append({
         "type": "text",
-        "text": f"""Das sind {len(frames)} Screenshots aus einem Werbevideo von Weingut Huppert (Gundersheim, Rheinhessen).
-Dateiname: {video_name}{transcript_block}
+        "text": f"""Das sind {len(frames)} Screenshots aus einem Werbevideo von Terra Preta Weingut Huppert (Gundersheim, Rheinhessen).
+Dateiname: {video_name}
+{f"Hook-Typ: {hook_info2}" if hook_info2 else ""}
+{transcript_block}
 
-Analysiere das Video vollständig — was zu sehen ist, was gesagt wird — und erstelle ein komplettes Meta Ads Setup das den echten Inhalt widerspiegelt.
+Analysiere das Video exakt — was ist zu sehen, was wird gesagt — und erstelle ein Meta Ads Setup das auf dem echten Inhalt basiert.
+
+PFLICHT fuer primary_text und headline:
+- Terra Preta, Pflanzenkohle, Kreislauf oder Bodenleben MUSS vorkommen — konkret, nicht als Deko
+- Kein generisches Weinmarketing, keine leeren Qualitaets- oder Genussfloskeln
+- Ton: direkt, kantig, selbstbewusst — Beispiele: "Keine Massenware.", "Schwarze Erde, goldener Wein.", "Mit Haltung gemacht."
+- Nachhaltigkeit und Weincharakter zusammen denken — der Boden erklaert den Geschmack
 
 Antworte NUR mit diesem JSON (kein Markdown):
 {{
-  "video_inhalt": "Was ist konkret zu sehen und was wird gesagt? 2-3 präzise Sätze",
-  "primary_text": "Haupttext max. 125 Zeichen, basierend auf echtem Video-Inhalt",
-  "headline": "max. 40 Zeichen",
+  "video_inhalt": "Was ist konkret zu sehen und was wird gesagt? 2-3 praezise Saetze",
+  "primary_text": "max. 125 Zeichen — provokant, direkt, Terra-Preta-Bezug zwingend",
+  "headline": "max. 40 Zeichen — praegnant, merkfaehig",
   "description": "max. 30 Zeichen",
   "cta": "SHOP_NOW oder LEARN_MORE oder WATCH_MORE",
   "kampagnenziel": "VIDEO_VIEWS oder CONVERSIONS oder REACH",
-  "zielgruppe_alter": "z.B. 30-65",
-  "zielgruppe_geschlecht": "ALL oder MALE oder FEMALE",
-  "zielgruppe_interessen": ["Wein", "Genuss", "..."],
-  "zielgruppe_standort": "Deutschland, Österreich, Schweiz",
+  "zielgruppe_alter": "30-65",
+  "zielgruppe_geschlecht": "ALL",
+  "zielgruppe_interessen": ["Wein", "Nachhaltigkeit", "Genuss", "Rheinhessen"],
+  "zielgruppe_standort": "Deutschland (Geo-Ausschluss: 40km um PLZ 67598)",
   "placements": ["Facebook Feed", "Instagram Reels", "Stories"],
   "optimierungsziel": "THRUPLAY oder LINK_CLICKS",
   "gebotstrategie": "LOWEST_COST",
   "tagesbudget_eur": 5,
   "laufzeit_empfehlung": "7 Tage testen",
-  "hinweis": "Konkreter Tipp basierend auf dem tatsächlichen Video-Inhalt"
+  "hinweis": "Konkreter Tipp basierend auf dem echten Video-Inhalt — Staerke oder Risiko dieses Video-Typs"
 }}"""
     })
 
@@ -269,7 +335,7 @@ Antworte NUR mit diesem JSON (kein Markdown):
         import anthropic
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model="claude-opus-4-5",
+            model="claude-opus-4-6",
             max_tokens=900,
             system=BRAND_CONTEXT,
             messages=[{"role": "user", "content": content}]
@@ -285,7 +351,7 @@ Antworte NUR mit diesem JSON (kein Markdown):
 
 def _default_texts() -> dict:
     return {
-        "primary_text": "Entdecken Sie unsere handgemachten Weine aus Rheinhessen.",
-        "headline":     "Weingut Huppert",
-        "description":  "Jetzt entdecken",
+        "primary_text": "Schwarze Erde, goldener Wein. Keine Massenware. Kein Greenwashing.",
+        "headline":     "Terra Preta Weingut Huppert",
+        "description":  "Weine mit Haltung",
     }
