@@ -14,6 +14,16 @@ services:
         sync: false
       - key: META_PAGE_ID
         sync: false
+      - key: META_PIXEL_ID
+        sync: false
+      - key: META_CAPI_TOKEN
+        sync: false
+      - key: META_CAPI_TEST_CODE
+        sync: false
+      - key: WC_WEBHOOK_SECRET
+        sync: false
+      - key: WC_SHOP_URL
+        value: https://terrapretawein.de
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID

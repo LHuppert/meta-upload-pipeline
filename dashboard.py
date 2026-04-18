@@ -1625,6 +1625,73 @@ def api_settings():
     return jsonify(settings.get_all())
 
 
+# ── Meta CAPI Webhook ─────────────────────────────────────────────────────────
+# Empfängt WooCommerce Order-Webhooks und sendet Purchase an Meta CAPI.
+# Öffentlich erreichbar — HMAC-SHA256-Signatur pflicht, wenn WC_WEBHOOK_SECRET
+# in den Env-Vars gesetzt ist.
+import hmac as _hmac_mod
+import hashlib as _hashlib_mod
+import base64 as _base64_mod
+
+def _wc_webhook_valid(raw_body: bytes, received_sig: str, secret: str) -> bool:
+    if not secret or not received_sig:
+        return False
+    mac = _hmac_mod.new(secret.encode('utf-8'), raw_body, _hashlib_mod.sha256).digest()
+    expected = _base64_mod.b64encode(mac).decode('utf-8')
+    return _hmac_mod.compare_digest(expected, received_sig)
+
+
+@app.route("/webhook/woocommerce/order", methods=["POST"])
+def webhook_woocommerce_order():
+    """Empfängt WooCommerce Order-Webhooks und sendet Purchase an Meta CAPI.
+    Keine Login-Pflicht (externer Aufruf), aber HMAC-Signatur-Verifikation."""
+    from meta_capi import send_purchase
+
+    raw = request.get_data() or b''
+    sig = request.headers.get('X-WC-Webhook-Signature', '')
+    secret = os.environ.get('WC_WEBHOOK_SECRET', '')
+
+    if secret and not _wc_webhook_valid(raw, sig, secret):
+        logger.warning(f'WC Webhook ungültige Signatur (len={len(raw)})')
+        return jsonify({'ok': False, 'error': 'signature'}), 401
+
+    try:
+        order = request.get_json(silent=True) or {}
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'json: {e}'}), 400
+
+    status = (order.get('status') or '').lower()
+    order_id = order.get('id')
+    if not order_id:
+        return jsonify({'ok': False, 'error': 'no order id'}), 400
+
+    # Nur zahlungswirksame Status feuern
+    if status not in ('processing', 'completed', 'on-hold'):
+        return jsonify({'ok': True, 'skipped': f'status={status}'}), 200
+
+    result = send_purchase(order)
+    if not result.get('ok'):
+        logger.error(f'CAPI Order {order_id} Fehler: {result.get("error")}')
+        return jsonify({'ok': False, 'order_id': order_id, **result}), 502
+
+    logger.info(f'CAPI Purchase gesendet: Order {order_id} → {result.get("events_received")} Events')
+    return jsonify({'ok': True, 'order_id': order_id, **result}), 200
+
+
+@app.route("/api/capi/status", methods=["GET"])
+def api_capi_status():
+    from meta_capi import check_connection
+    return jsonify(check_connection())
+
+
+@app.route("/api/capi/test", methods=["POST"])
+@login_required
+def api_capi_test():
+    """Feuert ein Test-Purchase (login-geschützt)."""
+    from meta_capi import send_test
+    return jsonify(send_test())
+
+
 # ── Start ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
